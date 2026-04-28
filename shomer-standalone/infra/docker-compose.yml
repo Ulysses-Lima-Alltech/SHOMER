@@ -1,0 +1,71 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: shomer-postgres
+    environment:
+      POSTGRES_USER: shomer
+      POSTGRES_PASSWORD: shomer_dev
+      POSTGRES_DB: shomer
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shomer"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shomer-network
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:23-alpine
+    container_name: shomer-clickhouse
+    environment:
+      CLICKHOUSE_DB: shomer
+      CLICKHOUSE_USER: shomer
+      CLICKHOUSE_PASSWORD: shomer_dev
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"  # HTTP
+      - "9000:9000"  # Native
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse/ddl/events.sql:/docker-entrypoint-initdb.d/events.sql:ro
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "localhost:8123/ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shomer-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: shomer-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - shomer-network
+
+volumes:
+  postgres_data:
+  clickhouse_data:
+  redis_data:
+
+networks:
+  shomer-network:
+    driver: bridge
+
