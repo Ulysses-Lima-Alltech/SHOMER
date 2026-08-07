@@ -47,6 +47,13 @@ class Settings(BaseSettings):
     LINE_CROSSING_COOLDOWN_SECONDS: float = Field(default=1.0, ge=0.0)
     LINE_CROSSING_TRACK_TTL_SECONDS: float = Field(default=10.0, gt=0.0)
 
+    CROSSING_EVENTS_ENABLED: bool = False
+    EVENT_QUEUE_MAX_SIZE: int = Field(default=1000, gt=0)
+    EVENT_PUBLISH_MAX_ATTEMPTS: int = Field(default=3, ge=1)
+    EVENT_PUBLISH_RETRY_BASE_SECONDS: float = Field(default=0.5, ge=0.0)
+    EVENT_PUBLISH_RETRY_MAX_SECONDS: float = Field(default=5.0, ge=0.0)
+    EVENT_PUBLISH_DRAIN_TIMEOUT_SECONDS: float = Field(default=5.0, ge=0.0)
+
     # Configuracao para modo MOCK (dev end-to-end)
     TENANT_ID: Optional[str] = None
     STORE_ID: Optional[str] = None
@@ -82,6 +89,31 @@ class Settings(BaseSettings):
         )
         if line_length < MIN_LINE_LENGTH:
             raise ValueError("line crossing points A and B must be meaningfully different")
+        if self.EVENT_PUBLISH_RETRY_MAX_SECONDS < self.EVENT_PUBLISH_RETRY_BASE_SECONDS:
+            raise ValueError(
+                "EVENT_PUBLISH_RETRY_MAX_SECONDS must be greater than or equal to "
+                "EVENT_PUBLISH_RETRY_BASE_SECONDS"
+            )
+        if self.CROSSING_EVENTS_ENABLED:
+            required_values = {
+                "TENANT_ID": self.TENANT_ID,
+                "CAMERA_ID": self.CAMERA_ID,
+                "EDGE_DEVICE_ID": self.EDGE_DEVICE_ID,
+                "DEVICE_KEY": self.DEVICE_KEY,
+                "INGESTION_URL": self.INGESTION_URL,
+            }
+            missing = [
+                name for name, value in required_values.items() if not str(value or "").strip()
+            ]
+            if self.EDGE_DEVICE_ID == "test-device-id":
+                missing.append("EDGE_DEVICE_ID")
+            if self.DEVICE_KEY == "test-device-key":
+                missing.append("DEVICE_KEY")
+            if missing:
+                raise ValueError(
+                    "CROSSING_EVENTS_ENABLED requires production values for: "
+                    + ", ".join(dict.fromkeys(missing))
+                )
         return self
 
     class Config:
