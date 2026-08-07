@@ -2,9 +2,10 @@
 Enviador de eventos para o serviço de ingestion
 """
 import httpx
-import asyncio
 from typing import Dict, Any
 import logging
+
+from src.vision.camera import sanitize_error
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +32,13 @@ class EventSender:
                 },
             )
             response.raise_for_status()
-            logger.info(f"Evento enviado: {event['type']} ({event['eventId']})")
+            logger.info("Evento enviado: %s (%s)", event["type"], event["eventId"])
             return True
         except httpx.HTTPError as e:
-            logger.error(f"Erro ao enviar evento: {e}")
+            logger.error("Erro ao enviar evento: %s", sanitize_error(str(e)))
             return False
         except Exception as e:
-            logger.error(f"Erro inesperado ao enviar evento: {e}")
+            logger.error("Erro inesperado ao enviar evento: %s", sanitize_error(str(e)))
             return False
 
     async def close(self):

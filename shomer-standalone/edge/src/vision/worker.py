@@ -3,11 +3,13 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
+from typing import Callable
 
 from src.config import Settings
 from src.analytics.line_crossing import (
     EnterDirection,
     LineCrossingAnalyzer,
+    LineCrossingEvent,
     NormalizedPoint,
 )
 from src.vision.camera import CameraCapture, sanitize_error
@@ -20,8 +22,13 @@ logger = logging.getLogger(__name__)
 class VisionWorker:
     """Runs camera capture and person tracking outside the FastAPI event loop."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        crossing_event_sink: Callable[[LineCrossingEvent], None] | None = None,
+    ) -> None:
         self.settings = settings
+        self.crossing_event_sink = crossing_event_sink
         self.camera = CameraCapture(
             source=settings.RESOLVED_CAMERA_SOURCE,
             reconnect_seconds=settings.CAMERA_RECONNECT_SECONDS,
@@ -150,10 +157,13 @@ class VisionWorker:
                         height, width = frame.shape[:2]
                         detected_at = datetime.now(timezone.utc)
                         with self._lock:
-                            self.line_crossing.process(persons, width, height)
+                            crossing_events = self.line_crossing.process(
+                                persons, width, height
+                            )
                             self.persons_current = persons
                             self.last_detection_at = detected_at
                             self.last_error = None
+                        self._publish_crossing_events(crossing_events)
                     except Exception as exc:
                         self._record_error(f"Detection failed: {exc}")
                         logger.warning("Detection failed", exc_info=True)
@@ -202,3 +212,12 @@ class VisionWorker:
         with self._lock:
             self._model_error = sanitize_error(message)
             self.last_error = self._model_error
+
+    def _publish_crossing_events(self, events: list[LineCrossingEvent]) -> None:
+        if self.crossing_event_sink is None:
+            return
+        for event in events:
+            try:
+                self.crossing_event_sink(event)
+            except Exception:
+                logger.exception("Crossing event sink failed")
