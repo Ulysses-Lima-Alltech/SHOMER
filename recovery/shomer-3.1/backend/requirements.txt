@@ -1,0 +1,44 @@
+## Índices extras (necessário para instalar Torch com CUDA)
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+# Web framework
+fastapi==0.95.0
+uvicorn[standard]==0.22.0
+pydantic==1.7.4
+
+# Visão computacional & modelos
+# Fixar combo compatível com Python 3.10 e bins atuais (evita _ARRAY_API / NumPy 2.x)
+opencv-python==4.9.0.80
+numpy==1.26.4
+
+# PyTorch com CUDA 12.1 (GPU) - compatível com RTX 30xx (3050)
+torch==2.3.1+cu121
+torchvision==0.18.1+cu121
+torchaudio==2.3.1+cu121
+
+ultralytics>=8.3.0
+mediapipe>=0.10.4
+insightface>=0.7.3
+# ONNX Runtime CPU (evita dependências de CUDA/cuDNN do ORT)
+onnxruntime==1.17.1
+
+# (Opcional) Se você usar leitura de arquivos, logs etc.
+python-multipart>=0.0.6
+
+# Autenticação e banco de dados
+passlib[bcrypt]==1.7.4
+bcrypt==3.2.2
+python-dotenv>=1.0.0
+python-jose[cryptography]>=3.3.0
+email-validator>=2.0.0
+
+# Banco de dados PostgreSQL (async)
+SQLAlchemy>=2.0.30
+asyncpg>=0.29.0
+alembic>=1.13.1
+
+# HTTP client para envio de logs
+httpx>=0.24.0
+
+# Interface gráfica
+PyQt5>=5.15.0
