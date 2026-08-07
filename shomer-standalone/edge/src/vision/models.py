@@ -38,6 +38,12 @@ class VisionStats:
     model_ready: bool
     frames_processed: int
     persons_current: int
+    line_crossing_enabled: bool = False
+    entries: int = 0
+    exits: int = 0
+    last_crossing_at: datetime | None = None
+    last_crossing_direction: str | None = None
+    last_crossing_track_id: int | None = None
     track_ids: list[int] = field(default_factory=list)
     last_frame_at: datetime | None = None
     last_detection_at: datetime | None = None
@@ -51,6 +57,14 @@ class VisionStats:
             "model_ready": self.model_ready,
             "frames_processed": self.frames_processed,
             "persons_current": self.persons_current,
+            "line_crossing_enabled": self.line_crossing_enabled,
+            "entries": self.entries,
+            "exits": self.exits,
+            "last_crossing_at": (
+                self.last_crossing_at.isoformat() if self.last_crossing_at else None
+            ),
+            "last_crossing_direction": self.last_crossing_direction,
+            "last_crossing_track_id": self.last_crossing_track_id,
             "track_ids": self.track_ids,
             "last_frame_at": self.last_frame_at.isoformat() if self.last_frame_at else None,
             "last_detection_at": (

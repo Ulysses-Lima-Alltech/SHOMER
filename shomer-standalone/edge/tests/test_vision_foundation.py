@@ -48,6 +48,16 @@ class FakeSettings:
     YOLO_IMAGE_SIZE = 320
     YOLO_TRACKER = "bytetrack.yaml"
     VISION_FPS = 1.0
+    LINE_CROSSING_ENABLED = True
+    LINE_CROSSING_LINE_ID = "main"
+    LINE_CROSSING_X1 = 0.0
+    LINE_CROSSING_Y1 = 0.5
+    LINE_CROSSING_X2 = 1.0
+    LINE_CROSSING_Y2 = 0.5
+    LINE_CROSSING_ENTER_DIRECTION = "A_TO_B"
+    LINE_CROSSING_TOLERANCE = 0.02
+    LINE_CROSSING_COOLDOWN_SECONDS = 1.0
+    LINE_CROSSING_TRACK_TTL_SECONDS = 10.0
 
 
 class VisionFoundationTests(unittest.TestCase):
@@ -122,6 +132,8 @@ class VisionFoundationTests(unittest.TestCase):
         self.assertFalse(status["model_ready"])
         self.assertEqual(status["frames_processed"], 0)
         self.assertEqual(status["persons_current"], 0)
+        self.assertEqual(status["entries"], 0)
+        self.assertEqual(status["exits"], 0)
 
     def test_worker_resets_tracker_after_camera_reconnect(self):
         class FakeDetector:
@@ -146,6 +158,8 @@ class VisionFoundationTests(unittest.TestCase):
 
         self.assertIn("mode", payload)
         self.assertIn("persons_current", payload)
+        self.assertIn("entries", payload)
+        self.assertIn("exits", payload)
         self.assertNotIn("bbox", payload)
         self.assertNotIn("frame", payload)
         self.assertNotIn("DEVICE_KEY", payload)
