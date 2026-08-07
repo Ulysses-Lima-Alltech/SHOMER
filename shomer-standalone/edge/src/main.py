@@ -1,34 +1,31 @@
-"""
-SHOMER Edge Service
-Serviço de captura e processamento de vídeo na borda
-"""
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-import asyncio
 import logging
 from contextlib import asynccontextmanager
-from src.health import router as health_router
-from src.config import settings
-from src.mock.worker import MockWorker
 
-# Configurar logging
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from src.config import settings
+from src.health import router as health_router
+from src.mock.worker import MockWorker
+from src.vision.status import router as vision_router
+from src.vision.worker import VisionWorker
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# Variável global para o worker
-mock_worker: MockWorker = None
+mock_worker: MockWorker | None = None
+vision_worker: VisionWorker | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Gerencia o ciclo de vida da aplicação"""
-    global mock_worker
+    """Manage the application lifecycle."""
+    global mock_worker, vision_worker
 
-    # Startup
     if settings.MODE == "mock":
         logger.info("Iniciando modo MOCK...")
         tenant_id = settings.TENANT_ID or "demo-tenant-id"
@@ -45,25 +42,37 @@ async def lifespan(app: FastAPI):
             device_key=device_key,
             ingestion_url=settings.INGESTION_URL,
         )
+        app.state.mock_worker = mock_worker
         await mock_worker.start()
         logger.info("Modo MOCK iniciado")
+    elif settings.MODE == "production":
+        logger.info("Iniciando modo PRODUCTION...")
+        vision_worker = VisionWorker(settings)
+        app.state.vision_worker = vision_worker
+        await vision_worker.start()
+        logger.info("Modo PRODUCTION iniciado")
+    else:
+        raise RuntimeError(
+            f"MODE invalido: {settings.MODE!r}. Use 'mock' ou 'production'."
+        )
 
     yield
 
-    # Shutdown
     if mock_worker:
         await mock_worker.stop()
         logger.info("Modo MOCK parado")
+    if vision_worker:
+        await vision_worker.stop()
+        logger.info("Modo PRODUCTION parado")
 
 
 app = FastAPI(
     title="SHOMER Edge Service",
-    description="Serviço de captura e processamento de vídeo na borda",
+    description="Servico de captura e processamento de video na borda",
     version="1.0.0",
     lifespan=lifespan,
 )
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -72,8 +81,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
 app.include_router(health_router, prefix="/health", tags=["health"])
+app.include_router(vision_router, prefix="/vision", tags=["vision"])
 
 
 @app.get("/")
@@ -94,4 +103,3 @@ if __name__ == "__main__":
         port=8000,
         reload=True,
     )
-
