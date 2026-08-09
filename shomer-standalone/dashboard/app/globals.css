@@ -15,7 +15,11 @@
   --accent-contrast: #ffffff;
 
   --success: #33765b;
+  --success-soft: rgba(51, 118, 91, 0.12);
+  --warning: #a3690f;
+  --warning-soft: rgba(163, 105, 15, 0.13);
   --danger: #b45149;
+  --danger-soft: rgba(180, 81, 73, 0.12);
 
   --shadow:
     0 1px 2px rgba(0, 0, 0, 0.025),
@@ -24,6 +28,26 @@
   --radius-sm: 10px;
   --radius-md: 16px;
   --radius-lg: 24px;
+
+  /* Escala tipográfica — usada nos componentes novos (status, alertas,
+     cards de KPI, relatórios). O restante do arquivo ainda usa valores
+     literais herdados da primeira versão do dashboard. */
+  --text-2xs: 10.5px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 15px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 30px;
+  --text-3xl: 44px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
 
   color-scheme: light;
 }
@@ -39,6 +63,13 @@
   --text-faint: #706f68;
 
   --border: rgba(255, 255, 255, 0.085);
+
+  --success: #4fa27f;
+  --success-soft: rgba(79, 162, 127, 0.16);
+  --warning: #d1954a;
+  --warning-soft: rgba(209, 149, 74, 0.16);
+  --danger: #d17b73;
+  --danger-soft: rgba(209, 123, 115, 0.16);
 
   --shadow:
     0 1px 2px rgba(0, 0, 0, 0.25),
@@ -1326,6 +1357,137 @@ a {
   }
 }
 
+/* =========================================================
+   LOGIN
+   ========================================================= */
+
+.login-shell {
+  min-height: 100vh;
+
+  display: grid;
+  place-items: center;
+
+  padding: 24px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 360px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+
+  padding: 36px 32px;
+
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.login-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+
+  margin-bottom: 8px;
+
+  font-weight: 760;
+  letter-spacing: -0.03em;
+}
+
+.login-card h1 {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 580;
+  letter-spacing: -0.03em;
+}
+
+.login-card > p {
+  margin: 0 0 8px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+.login-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  font-size: 12px;
+  color: var(--text-soft);
+}
+
+.login-card input {
+  padding: 10px 12px;
+
+  border: 1px solid var(--border);
+  border-radius: 10px;
+
+  background: var(--bg);
+  color: var(--text);
+
+  font-size: 14px;
+}
+
+.login-card input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.login-card button {
+  margin-top: 8px;
+
+  padding: 12px;
+
+  border: 0;
+  border-radius: 10px;
+
+  background: var(--accent);
+  color: var(--accent-contrast);
+
+  font-size: 14px;
+  font-weight: 650;
+
+  cursor: pointer;
+}
+
+.login-card button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.login-error {
+  padding: 10px 12px;
+
+  border-radius: 10px;
+
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+
+  font-size: 12px;
+}
+
+/* =========================================================
+   ESTADOS DE CARREGAMENTO / ERRO NO DASHBOARD
+   ========================================================= */
+
+.page-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  min-height: 60vh;
+
+  color: var(--text-soft);
+  font-size: 14px;
+}
+
+.page-status.is-error {
+  color: var(--danger);
+}
+
 /* telas grandes: aproveitar melhor a largura disponível */
 
 @media (min-width: 1450px) {
@@ -1474,5 +1636,428 @@ a {
 
   .trend {
     font-size: 14px !important;
+  }
+}
+
+/* =========================================================
+   NAV (Link-based, com estado ativo/desabilitado)
+   ========================================================= */
+
+.nav-item.disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* =========================================================
+   STATUS AO VIVO
+   ========================================================= */
+
+.status-pill {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+
+  padding: 7px 12px 7px 10px;
+
+  border: 1px solid var(--border);
+  border-radius: 999px;
+
+  background: var(--surface);
+
+  font-size: var(--text-xs);
+  color: var(--text-soft);
+
+  white-space: nowrap;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+
+  border-radius: 50%;
+
+  background: var(--text-faint);
+}
+
+.status-pill.live .status-dot {
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-soft);
+  animation: status-pulse 2.2s ease-in-out infinite;
+}
+
+.status-pill.offline .status-dot {
+  background: var(--danger);
+}
+
+@keyframes status-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px var(--success-soft);
+  }
+  50% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+/* =========================================================
+   BANNER DE ALERTA
+   ========================================================= */
+
+.alert-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  margin-bottom: 24px;
+  padding: 14px 18px;
+
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.alert-banner strong {
+  font-weight: 650;
+}
+
+.alert-banner.warning {
+  background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 35%, transparent);
+  color: var(--warning);
+}
+
+.alert-banner-icon {
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+.alert-banner-body {
+  color: var(--text);
+}
+
+.alert-banner-body span {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-soft);
+  font-size: var(--text-xs);
+}
+
+/* =========================================================
+   KPI CARDS v2 (com ícone + tendência)
+   ========================================================= */
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 14px;
+
+  margin-bottom: 20px;
+}
+
+.kpi-card {
+  padding: 22px;
+
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+}
+
+.kpi-card.is-primary {
+  background:
+    linear-gradient(155deg, var(--accent-soft), transparent 60%),
+    var(--surface);
+  border-color: color-mix(in srgb, var(--accent) 25%, var(--border));
+}
+
+.kpi-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+
+  margin-bottom: 26px;
+}
+
+.kpi-icon {
+  display: grid;
+  place-items: center;
+
+  width: 34px;
+  height: 34px;
+
+  border-radius: 10px;
+
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.kpi-icon svg {
+  width: 17px;
+  height: 17px;
+}
+
+.kpi-badge {
+  padding: 4px 9px;
+
+  border-radius: 999px;
+
+  font-size: var(--text-2xs);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.kpi-badge.ok {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.kpi-badge.warn {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.kpi-label {
+  display: block;
+  margin-bottom: 8px;
+
+  color: var(--text-soft);
+  font-size: var(--text-sm);
+}
+
+.kpi-value {
+  font-size: var(--text-3xl);
+  font-weight: 560;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.kpi-context {
+  display: block;
+  margin-top: 10px;
+
+  color: var(--text-faint);
+  font-size: var(--text-xs);
+}
+
+@media (max-width: 1000px) {
+  .kpi-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* =========================================================
+   ESTADO VAZIO
+   ========================================================= */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+
+  padding: 56px 24px;
+
+  color: var(--text-soft);
+  text-align: center;
+  font-size: var(--text-sm);
+}
+
+.empty-state strong {
+  color: var(--text);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+/* =========================================================
+   RELATÓRIOS
+   ========================================================= */
+
+.reports-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+
+  margin-bottom: 28px;
+}
+
+.export-button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+
+  padding: 10px 14px;
+
+  border: 1px solid var(--border);
+  border-radius: 10px;
+
+  background: var(--surface);
+  color: var(--text);
+
+  font-size: var(--text-sm);
+  font-weight: 600;
+
+  cursor: pointer;
+}
+
+.export-button:hover {
+  background: var(--surface-hover);
+}
+
+.export-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.export-button svg {
+  width: 15px;
+  height: 15px;
+}
+
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+
+  margin-bottom: 18px;
+}
+
+@media (max-width: 720px) {
+  .summary-cards {
+    grid-template-columns: 1fr;
+  }
+}
+
+.daily-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+
+  height: 220px;
+  margin-top: 30px;
+  padding-bottom: 24px;
+
+  position: relative;
+  border-bottom: 1px solid var(--border);
+}
+
+.daily-bar-col {
+  flex: 1;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+
+  height: 100%;
+
+  position: relative;
+}
+
+.daily-bar {
+  width: 100%;
+  max-width: 34px;
+
+  border-radius: 6px 6px 2px 2px;
+
+  background: var(--accent);
+  opacity: 0.85;
+
+  transition: opacity 160ms ease;
+}
+
+.daily-bar-col:hover .daily-bar {
+  opacity: 1;
+}
+
+.daily-bar-col.is-today .daily-bar {
+  background: var(--accent);
+  opacity: 1;
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.daily-bar-label {
+  position: absolute;
+  bottom: -22px;
+
+  color: var(--text-faint);
+  font-size: 9px;
+  white-space: nowrap;
+}
+
+.daily-bar-tooltip {
+  margin-bottom: 6px;
+
+  color: var(--text-soft);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pattern-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+
+  height: 140px;
+  margin-top: 24px;
+}
+
+.pattern-bar-col {
+  flex: 1;
+
+  display: flex;
+  align-items: flex-end;
+
+  height: 100%;
+}
+
+.pattern-bar {
+  width: 100%;
+
+  border-radius: 3px 3px 0 0;
+
+  background: var(--accent-soft);
+}
+
+.pattern-bar.is-peak {
+  background: var(--accent);
+}
+
+/* =========================================================
+   SKELETON (carregamento)
+   ========================================================= */
+
+.skeleton {
+  border-radius: 8px;
+
+  background: linear-gradient(
+    100deg,
+    var(--surface-soft) 30%,
+    var(--surface-hover) 50%,
+    var(--surface-soft) 70%
+  );
+  background-size: 200% 100%;
+
+  animation: skeleton-shine 1.4s ease-in-out infinite;
+}
+
+@keyframes skeleton-shine {
+  0% {
+    background-position: 150% 0;
+  }
+  100% {
+    background-position: -50% 0;
   }
 }
