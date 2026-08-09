@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: shomer_dev
       POSTGRES_DB: shomer
     ports:
-      - "5432:5432"
+      - "15432:5432"  # host port remapped: 5432 collided with a native Postgres service on this machine
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -29,7 +29,7 @@ services:
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
     ports:
       - "8123:8123"  # HTTP
-      - "9000:9000"  # Native
+      - "19000:9000"  # Native (host port remapped: 9000 was occupied by another local container)
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./clickhouse/ddl/events.sql:/docker-entrypoint-initdb.d/events.sql:ro
