@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
@@ -463,7 +463,7 @@ function HorarioSection({ session, tenantId }: { session: SessionUser; tenantId:
   );
 }
 
-export default function ConfiguracoesPage() {
+function ConfiguracoesPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [session, setSession] = useState<SessionUser | null>(null);
@@ -516,5 +516,13 @@ export default function ConfiguracoesPage() {
         </div>
       )}
     </Shell>
+  );
+}
+
+export default function ConfiguracoesPage() {
+  return (
+    <Suspense fallback={null}>
+      <ConfiguracoesPageInner />
+    </Suspense>
   );
 }
