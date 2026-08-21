@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 
 from src.config import settings
 from src.events.publisher import EventPublisherStats
@@ -49,3 +49,17 @@ async def status(request: Request) -> dict[str, object]:
         **worker.status().to_dict(),
         **_publisher_status(request),
     }
+
+
+@router.get("/snapshot")
+async def snapshot(request: Request) -> Response:
+    """Latest camera frame as JPEG — a single still image (not a live
+    stream), used as the background for the heatmap overlay in the
+    dashboard."""
+    worker = getattr(request.app.state, "vision_worker", None)
+    if worker is None:
+        raise HTTPException(status_code=404, detail="Vision worker not running (MODE=mock?)")
+    jpeg = worker.get_latest_frame_jpeg()
+    if jpeg is None:
+        raise HTTPException(status_code=503, detail="No frame captured yet")
+    return Response(content=jpeg, media_type="image/jpeg")

@@ -17,13 +17,20 @@ def sanitize_error(message: str | None) -> str | None:
 class CameraCapture:
     """Owns video source lifecycle: open, read, reconnect and release."""
 
-    def __init__(self, source: str | int, reconnect_seconds: float) -> None:
+    def __init__(
+        self,
+        source: str | int,
+        reconnect_seconds: float,
+        reconnect_max_seconds: float | None = None,
+    ) -> None:
         self.source = source
         self.reconnect_seconds = reconnect_seconds
+        self.reconnect_max_seconds = reconnect_max_seconds or max(reconnect_seconds, 60.0)
         self.cap: Any | None = None
         self.connected = False
         self.last_error: str | None = None
         self._last_reconnect_attempt = 0.0
+        self._consecutive_failures = 0
 
     def open(self) -> bool:
         self.close()
@@ -33,6 +40,7 @@ class CameraCapture:
                     self.cap = capture
                     self.connected = True
                     self.last_error = None
+                    self._consecutive_failures = 0
                     self._configure_capture()
                     logger.info("Camera source opened")
                     return True
@@ -46,9 +54,17 @@ class CameraCapture:
                     logger.debug("Failed to release unopened camera capture", exc_info=True)
 
         self.connected = False
+        self._consecutive_failures += 1
         self.last_error = "Camera source unavailable"
         logger.error(self.last_error)
         return False
+
+    def _current_backoff_seconds(self) -> float:
+        # Exponential backoff so a flaky network/DVR doesn't get hammered
+        # with reconnect attempts: reconnect_seconds, x2, x4, ... capped at
+        # reconnect_max_seconds.
+        backoff = self.reconnect_seconds * (2**self._consecutive_failures)
+        return min(backoff, self.reconnect_max_seconds)
 
     def read(self) -> Any | None:
         if not self.connected or self.cap is None:
@@ -75,10 +91,12 @@ class CameraCapture:
 
     def reconnect_if_due(self) -> bool:
         now = time.monotonic()
-        if now - self._last_reconnect_attempt < self.reconnect_seconds:
+        if now - self._last_reconnect_attempt < self._current_backoff_seconds():
             return False
         self._last_reconnect_attempt = now
-        logger.info("Attempting camera reconnect")
+        logger.info(
+            "Attempting camera reconnect (attempt %d)", self._consecutive_failures + 1
+        )
         return self.open()
 
     def close(self) -> None:

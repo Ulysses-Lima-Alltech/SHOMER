@@ -5,13 +5,38 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 from src.analytics.line_crossing import MIN_LINE_LENGTH
+from src.vision.intelbras import build_intelbras_rtsp_url
 
 
-def resolve_camera_source(camera_source: Optional[str], rtsp_url: Optional[str]) -> str | int:
-    """Resolve CAMERA_SOURCE with RTSP_URL fallback for older deployments."""
+def resolve_camera_source(
+    camera_source: Optional[str],
+    rtsp_url: Optional[str],
+    intelbras_host: Optional[str] = None,
+    intelbras_user: Optional[str] = None,
+    intelbras_password: Optional[str] = None,
+    intelbras_port: int = 554,
+    intelbras_channel: int = 1,
+    intelbras_subtype: int = 0,
+) -> str | int:
+    """Resolve the camera source.
+
+    Precedence: CAMERA_SOURCE, then RTSP_URL (kept for older deployments),
+    then CAMERA_INTELBRAS_HOST/USER/PASSWORD (builds the RTSP URL so an
+    installer only needs the camera's IP and credentials on site), then
+    webcam index 0 as a last resort.
+    """
     source = (camera_source or "").strip()
     if not source:
         source = (rtsp_url or "").strip()
+    if not source and intelbras_host and intelbras_user is not None and intelbras_password is not None:
+        source = build_intelbras_rtsp_url(
+            host=intelbras_host,
+            username=intelbras_user,
+            password=intelbras_password,
+            port=intelbras_port,
+            channel=intelbras_channel,
+            subtype=intelbras_subtype,
+        )
     if not source:
         source = "0"
     if source.isdigit():
@@ -27,6 +52,16 @@ class Settings(BaseSettings):
     # Camera/vision (para modo production)
     CAMERA_SOURCE: str = ""
     RTSP_URL: str = ""
+    # Alternativa a CAMERA_SOURCE/RTSP_URL: informe apenas IP + credenciais
+    # de uma camera/DVR/NVR Intelbras e a URL RTSP e montada automaticamente
+    # (formato "cam/realmonitor", padrao OEM Dahua usado pelas Intelbras).
+    CAMERA_INTELBRAS_HOST: str = ""
+    CAMERA_INTELBRAS_USER: str = ""
+    CAMERA_INTELBRAS_PASSWORD: str = ""
+    CAMERA_INTELBRAS_PORT: int = Field(default=554, gt=0)
+    CAMERA_INTELBRAS_CHANNEL: int = Field(default=1, gt=0)
+    # 0 = mainstream (resolucao cheia), 1 = substream (mais leve para deteccao continua)
+    CAMERA_INTELBRAS_SUBTYPE: int = Field(default=0, ge=0)
     FFMPEG_PATH: str = "ffmpeg"
     YOLO_MODEL: str = "yolov8n.pt"
     YOLO_CONFIDENCE: float = Field(default=0.5, gt=0.0, le=1.0)
@@ -34,6 +69,14 @@ class Settings(BaseSettings):
     YOLO_TRACKER: str = "bytetrack.yaml"
     VISION_FPS: float = Field(default=5.0, gt=0.0)
     CAMERA_RECONNECT_SECONDS: float = Field(default=5.0, gt=0.0)
+    CAMERA_RECONNECT_MAX_SECONDS: float = Field(default=60.0, gt=0.0)
+
+    # Pausa o processamento fora do horario de funcionamento da loja
+    # (configurado no dashboard, em Configuracoes). Busca o horario no
+    # endpoint publico da API periodicamente. Desativado por padrao —
+    # precisa de TENANT_ID e API_URL configurados corretamente.
+    BUSINESS_HOURS_CHECK_ENABLED: bool = False
+    BUSINESS_HOURS_POLL_INTERVAL_SECONDS: float = Field(default=300.0, gt=0.0)
 
     # Local line-crossing analytics. Coordinates are normalized to frame size.
     LINE_CROSSING_ENABLED: bool = True
@@ -48,6 +91,16 @@ class Settings(BaseSettings):
     LINE_CROSSING_TRACK_TTL_SECONDS: float = Field(default=10.0, gt=0.0)
 
     CROSSING_EVENTS_ENABLED: bool = False
+    # Publica um evento person.detected por pessoa rastreada, no maximo a
+    # cada DETECTION_EVENTS_MIN_INTERVAL_SECONDS por track_id. Usa a mesma
+    # fila/publisher dos eventos de line crossing.
+    DETECTION_EVENTS_ENABLED: bool = False
+    DETECTION_EVENTS_MIN_INTERVAL_SECONDS: float = Field(default=3.0, ge=0.0)
+    # Publica edge.health.reported periodicamente (independente de
+    # CROSSING/DETECTION_EVENTS_ENABLED) para alimentar a tela Monitoramento
+    # do dashboard sem depender de acesso direto a rede do cliente.
+    EDGE_HEALTH_REPORT_ENABLED: bool = False
+    EDGE_HEALTH_REPORT_INTERVAL_SECONDS: float = Field(default=30.0, gt=0.0)
     EVENT_QUEUE_MAX_SIZE: int = Field(default=1000, gt=0)
     EVENT_PUBLISH_MAX_ATTEMPTS: int = Field(default=3, ge=1)
     EVENT_PUBLISH_RETRY_BASE_SECONDS: float = Field(default=0.5, ge=0.0)
@@ -63,7 +116,16 @@ class Settings(BaseSettings):
 
     @property
     def RESOLVED_CAMERA_SOURCE(self) -> str | int:
-        return resolve_camera_source(self.CAMERA_SOURCE, self.RTSP_URL)
+        return resolve_camera_source(
+            self.CAMERA_SOURCE,
+            self.RTSP_URL,
+            intelbras_host=self.CAMERA_INTELBRAS_HOST or None,
+            intelbras_user=self.CAMERA_INTELBRAS_USER or None,
+            intelbras_password=self.CAMERA_INTELBRAS_PASSWORD or None,
+            intelbras_port=self.CAMERA_INTELBRAS_PORT,
+            intelbras_channel=self.CAMERA_INTELBRAS_CHANNEL,
+            intelbras_subtype=self.CAMERA_INTELBRAS_SUBTYPE,
+        )
 
     @field_validator("MODE")
     @classmethod
@@ -94,7 +156,11 @@ class Settings(BaseSettings):
                 "EVENT_PUBLISH_RETRY_MAX_SECONDS must be greater than or equal to "
                 "EVENT_PUBLISH_RETRY_BASE_SECONDS"
             )
-        if self.CROSSING_EVENTS_ENABLED:
+        if (
+            self.CROSSING_EVENTS_ENABLED
+            or self.DETECTION_EVENTS_ENABLED
+            or self.EDGE_HEALTH_REPORT_ENABLED
+        ):
             required_values = {
                 "TENANT_ID": self.TENANT_ID,
                 "CAMERA_ID": self.CAMERA_ID,
@@ -111,7 +177,8 @@ class Settings(BaseSettings):
                 missing.append("DEVICE_KEY")
             if missing:
                 raise ValueError(
-                    "CROSSING_EVENTS_ENABLED requires production values for: "
+                    "CROSSING_EVENTS_ENABLED/DETECTION_EVENTS_ENABLED/"
+                    "EDGE_HEALTH_REPORT_ENABLED requires production values for: "
                     + ", ".join(dict.fromkeys(missing))
                 )
         return self

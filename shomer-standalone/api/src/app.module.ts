@@ -6,6 +6,9 @@ import { AuthModule } from './auth/auth.module';
 import { StatsModule } from './stats/stats.module';
 import { ClickhouseModule } from './clickhouse/clickhouse.module';
 import { HealthController } from './health/health.controller';
+import { TenantsModule } from './tenants/tenants.module';
+import { UsersModule } from './users/users.module';
+import { DevicesModule } from './devices/devices.module';
 
 @Module({
   imports: [
@@ -17,6 +20,9 @@ import { HealthController } from './health/health.controller';
     ClickhouseModule,
     AuthModule,
     StatsModule,
+    TenantsModule,
+    UsersModule,
+    DevicesModule,
   ],
   controllers: [HealthController],
 })

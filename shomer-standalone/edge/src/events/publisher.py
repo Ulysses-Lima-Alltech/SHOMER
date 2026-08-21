@@ -133,6 +133,22 @@ class CrossingEventPublisher:
         except RuntimeError as exc:
             logger.warning("Crossing event enqueue rejected: %s", sanitize_error(str(exc)))
 
+    def enqueue_envelope_from_thread(self, envelope: EdgeEventEnvelope) -> None:
+        """Enqueue an already-built envelope (e.g. person.detected) from a
+        non-asyncio thread. Shares the same queue/retry/publish machinery as
+        line-crossing events."""
+        if (
+            not self.enabled
+            or not self._running
+            or self._loop is None
+            or self._loop.is_closed()
+        ):
+            return
+        try:
+            self._loop.call_soon_threadsafe(self._enqueue_nowait, envelope)
+        except RuntimeError as exc:
+            logger.warning("Event enqueue rejected: %s", sanitize_error(str(exc)))
+
     def status(self) -> EventPublisherStats:
         queue_depth = self._queue.qsize() if self._queue is not None else 0
         return EventPublisherStats(
