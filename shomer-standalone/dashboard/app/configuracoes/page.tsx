@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, Suspense, useCallback, useEffect, useState } from "react";
+import { FormEvent, MouseEvent as ReactMouseEvent, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
@@ -10,11 +10,15 @@ import {
   getDevices,
   getEdgeHealth,
   getOperatingHours,
+  getStoreLayout,
   getStoredUser,
   ManagedDevice,
   OperatingHours,
   SessionUser,
   setOperatingHours,
+  setStoreLayout,
+  StoreBarrier,
+  StoreLayoutPoint,
 } from "../../lib/api";
 import Shell from "../../components/Shell";
 import { ACCENT_OPTIONS, Accent, useTheme } from "../../components/Shell";
@@ -22,6 +26,7 @@ import { AlertIcon, ClockIcon, PulseIcon, UsersIcon } from "../../components/Ico
 
 const REFRESH_INTERVAL_MS = 15_000;
 const STALE_AFTER_MS = 90_000;
+const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL;
 
 const WEEKDAYS: Array<{ key: keyof OperatingHours; label: string }> = [
   { key: "monday", label: "Segunda" },
@@ -463,6 +468,263 @@ function HorarioSection({ session, tenantId }: { session: SessionUser; tenantId:
   );
 }
 
+const BARRIER_COLORS = ["#ef4444", "#f97316", "#eab308", "#22c55e", "#06b6d4", "#6366f1", "#ec4899"];
+
+function polygonPoints(points: StoreLayoutPoint[]): string {
+  return points.map((p) => `${(p.x * 100).toFixed(2)},${(p.y * 100).toFixed(2)}`).join(" ");
+}
+
+function DesenharLojaSection({ tenantId }: { tenantId: string }) {
+  const [barriers, setBarriers] = useState<StoreBarrier[]>([]);
+  const [draft, setDraft] = useState<StoreLayoutPoint[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  const [snapshotUrl, setSnapshotUrl] = useState<string | null>(null);
+  const [snapshotFailed, setSnapshotFailed] = useState(false);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+
+  useEffect(() => {
+    getStoreLayout(tenantId)
+      .then((result) => {
+        setBarriers(result);
+        setLoaded(true);
+      })
+      .catch(() => setLoaded(true));
+  }, [tenantId]);
+
+  const refreshSnapshot = useCallback(() => {
+    if (!EDGE_URL) return;
+    setSnapshotFailed(false);
+    setSnapshotUrl(`${EDGE_URL}/vision/snapshot?t=${Date.now()}`);
+  }, []);
+
+  useEffect(() => {
+    refreshSnapshot();
+  }, [refreshSnapshot]);
+
+  function handleStageClick(event: ReactMouseEvent<SVGSVGElement>) {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const x = Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width));
+    const y = Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height));
+    setDraft((prev) => [...prev, { x, y }]);
+    setSaved(false);
+  }
+
+  function undoLastPoint() {
+    setDraft((prev) => prev.slice(0, -1));
+  }
+
+  function cancelDraft() {
+    setDraft([]);
+  }
+
+  function finishBarrier() {
+    if (draft.length < 3) return;
+    const nextIndex = barriers.length + 1;
+    setBarriers((prev) => [
+      ...prev,
+      { id: `barrier-${Date.now()}`, label: `Barreira ${nextIndex}`, points: draft },
+    ]);
+    setDraft([]);
+    setSaved(false);
+  }
+
+  function updateLabel(id: string, label: string) {
+    setBarriers((prev) => prev.map((b) => (b.id === id ? { ...b, label } : b)));
+    setSaved(false);
+  }
+
+  function removeBarrier(id: string) {
+    setBarriers((prev) => prev.filter((b) => b.id !== id));
+    setSaved(false);
+  }
+
+  async function handleSave() {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await setStoreLayout(tenantId, barriers);
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao salvar o desenho da loja.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!loaded) return null;
+
+  return (
+    <section className="panel flow-panel" style={{ marginBottom: 18 }}>
+      <div className="panel-header">
+        <div>
+          <span className="panel-kicker">DESENHAR LOJA</span>
+          <h2>Marque balcões, prateleiras e outras barreiras</h2>
+          <p style={{ color: "var(--text-soft)", fontSize: 13, marginTop: 4 }}>
+            Contorne sobre a imagem da câmera os móveis fixos da loja (balcão, prateleira, gôndola...).
+            Esse contorno aparece como referência no mapa de calor, pra separar zonas realmente vazias
+            de zonas que só estão &quot;frias&quot; porque tem um móvel no caminho — ninguém pisa em
+            cima do balcão.
+          </p>
+        </div>
+        <button type="button" className="export-button" onClick={refreshSnapshot}>
+          Atualizar imagem
+        </button>
+      </div>
+
+      {!EDGE_URL || (!snapshotUrl && !snapshotFailed) ? (
+        <div className="empty-state" style={{ marginTop: 16 }}>
+          <AlertIcon style={{ width: 28, height: 28, color: "var(--text-faint)" }} />
+          <strong>Imagem da câmera indisponível</strong>
+          <span>Confirme que o dispositivo edge está online e reportando snapshot.</span>
+        </div>
+      ) : (
+        <>
+          <div className="heatmap-stage" style={{ marginTop: 16, cursor: "crosshair" }}>
+            {snapshotUrl && !snapshotFailed && (
+              // eslint-disable-next-line @next/next/no-img-element -- snapshot vem de fora do domínio Next
+              <img
+                src={snapshotUrl}
+                alt="Última imagem capturada pela câmera"
+                className="heatmap-snapshot"
+                onError={() => setSnapshotFailed(true)}
+              />
+            )}
+            <svg
+              ref={svgRef}
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              className="store-layout-svg"
+              onClick={handleStageClick}
+            >
+              {barriers.map((barrier, i) => (
+                <polygon
+                  key={barrier.id}
+                  points={polygonPoints(barrier.points)}
+                  fill={`${BARRIER_COLORS[i % BARRIER_COLORS.length]}33`}
+                  stroke={BARRIER_COLORS[i % BARRIER_COLORS.length]}
+                  strokeWidth={0.4}
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
+              {draft.length > 0 && (
+                <polyline
+                  points={polygonPoints(draft)}
+                  fill="none"
+                  stroke="#ffffff"
+                  strokeWidth={0.4}
+                  strokeDasharray="1.5,1"
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+              {draft.map((p, i) => (
+                <circle
+                  key={i}
+                  cx={p.x * 100}
+                  cy={p.y * 100}
+                  r={0.8}
+                  fill="#ffffff"
+                  stroke="#111"
+                  strokeWidth={0.2}
+                />
+              ))}
+            </svg>
+          </div>
+
+          <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "var(--text-faint)" }}>
+              Clique na imagem pra marcar os cantos da barreira ({draft.length} ponto
+              {draft.length === 1 ? "" : "s"}).
+            </span>
+            <button type="button" className="nav-item" onClick={undoLastPoint} disabled={draft.length === 0}>
+              Desfazer último ponto
+            </button>
+            <button type="button" className="nav-item" onClick={cancelDraft} disabled={draft.length === 0}>
+              Cancelar desenho
+            </button>
+            <button type="button" className="export-button" onClick={finishBarrier} disabled={draft.length < 3}>
+              Concluir área
+            </button>
+          </div>
+        </>
+      )}
+
+      <div style={{ marginTop: 18, overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr style={{ textAlign: "left", color: "var(--text-faint)" }}>
+              <th style={{ padding: "8px 12px" }} />
+              <th style={{ padding: "8px 12px" }}>Nome</th>
+              <th style={{ padding: "8px 12px" }}>Pontos</th>
+              <th style={{ padding: "8px 12px" }} />
+            </tr>
+          </thead>
+          <tbody>
+            {barriers.map((barrier, i) => (
+              <tr key={barrier.id} style={{ borderTop: "1px solid var(--border)" }}>
+                <td style={{ padding: "8px 12px" }}>
+                  <span
+                    style={{
+                      display: "inline-block",
+                      width: 10,
+                      height: 10,
+                      borderRadius: 3,
+                      background: BARRIER_COLORS[i % BARRIER_COLORS.length],
+                    }}
+                  />
+                </td>
+                <td style={{ padding: "8px 12px" }}>
+                  <input
+                    value={barrier.label}
+                    onChange={(e) => updateLabel(barrier.id, e.target.value)}
+                    style={{ padding: "6px 8px", border: "1px solid var(--border)", borderRadius: 6, width: "100%" }}
+                  />
+                </td>
+                <td style={{ padding: "8px 12px", color: "var(--text-soft)" }}>{barrier.points.length}</td>
+                <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                  <button
+                    type="button"
+                    className="nav-item"
+                    style={{ color: "var(--danger, #c0392b)" }}
+                    onClick={() => removeBarrier(barrier.id)}
+                  >
+                    Remover
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {barriers.length === 0 && (
+              <tr>
+                <td colSpan={4} style={{ padding: "16px 12px", color: "var(--text-faint)" }}>
+                  Nenhuma barreira desenhada ainda.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {error && <div className="login-error" style={{ marginTop: 12 }}>{error}</div>}
+      {saved && !error && <div style={{ marginTop: 12, color: "var(--accent)", fontSize: 13 }}>Desenho salvo.</div>}
+
+      <button
+        type="button"
+        className="export-button"
+        style={{ marginTop: 16 }}
+        onClick={handleSave}
+        disabled={saving}
+      >
+        {saving ? "Salvando..." : "Salvar desenho"}
+      </button>
+    </section>
+  );
+}
+
 function ConfiguracoesPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -502,6 +764,7 @@ function ConfiguracoesPageInner() {
       {tenantId ? (
         <>
           <CamerasSection session={session} tenantId={tenantId} />
+          <DesenharLojaSection tenantId={tenantId} />
           <HorarioSection session={session} tenantId={tenantId} />
         </>
       ) : (

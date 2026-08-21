@@ -23,6 +23,13 @@ export class Tenant {
   @Column({ name: 'operating_hours', type: 'jsonb', nullable: true })
   operatingHours: OperatingHours | null;
 
+  // Barreiras físicas da loja (balcão, prateleira, gôndola...) desenhadas
+  // manualmente pelo cliente sobre o snapshot da câmera (ver
+  // configuracoes -> "Desenhar loja"). Usado só pra overlay visual no mapa
+  // de calor - não afeta o cálculo das células, é referência humana.
+  @Column({ name: 'store_layout', type: 'jsonb', nullable: true })
+  storeLayout: StoreBarrier[] | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }
@@ -43,4 +50,15 @@ export interface OperatingHours {
   friday: DayHours;
   saturday: DayHours;
   sunday: DayHours;
+}
+
+export interface StoreLayoutPoint {
+  x: number; // 0..1, normalizado pela largura do snapshot da câmera
+  y: number; // 0..1, normalizado pela altura do snapshot da câmera
+}
+
+export interface StoreBarrier {
+  id: string;
+  label: string; // ex: "Balcão", "Prateleira 3"
+  points: StoreLayoutPoint[]; // polígono, mínimo 3 pontos
 }

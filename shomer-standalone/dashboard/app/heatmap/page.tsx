@@ -2,7 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ApiError, getHeatmap, getHourlyPattern, getStoredUser, getTenant, HeatmapResult, HourlyPoint } from "../../lib/api";
+import {
+  ApiError,
+  getHeatmap,
+  getHourlyPattern,
+  getStoreLayout,
+  getStoredUser,
+  getTenant,
+  HeatmapResult,
+  HourlyPoint,
+  StoreBarrier,
+} from "../../lib/api";
 import Shell from "../../components/Shell";
 import { PulseIcon } from "../../components/Icons";
 import { drawHeatmap, HeatPoint } from "../../lib/heatmapRenderer";
@@ -65,6 +75,7 @@ export default function HeatmapPage() {
   const [snapshotFailed, setSnapshotFailed] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [tenantName, setTenantName] = useState<string | null>(null);
+  const [storeLayout, setStoreLayout] = useState<StoreBarrier[]>([]);
 
   const load = useCallback(
     async (r: RangeOption) => {
@@ -102,6 +113,9 @@ export default function HeatmapPage() {
     getTenant(tenantId)
       .then((t) => setTenantName(t.name))
       .catch(() => setTenantName(null));
+    getStoreLayout(tenantId)
+      .then(setStoreLayout)
+      .catch(() => setStoreLayout([]));
   }, []);
 
   useEffect(() => {
@@ -274,6 +288,40 @@ export default function HeatmapPage() {
                   />
                 )}
                 <canvas ref={canvasRef} className="heatmap-canvas" />
+                {storeLayout.length > 0 && (
+                  <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="store-layout-overlay-svg">
+                    {storeLayout.map((barrier) => {
+                      const points = barrier.points
+                        .map((p) => `${(p.x * 100).toFixed(2)},${(p.y * 100).toFixed(2)}`)
+                        .join(" ");
+                      const cx = barrier.points.reduce((sum, p) => sum + p.x, 0) / barrier.points.length;
+                      const cy = barrier.points.reduce((sum, p) => sum + p.y, 0) / barrier.points.length;
+                      return (
+                        <g key={barrier.id}>
+                          <polygon
+                            points={points}
+                            fill="rgba(15,15,15,0.35)"
+                            stroke="rgba(255,255,255,0.85)"
+                            strokeWidth={0.4}
+                            strokeDasharray="1.2,0.8"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                          <text
+                            x={cx * 100}
+                            y={cy * 100}
+                            fontSize={2.6}
+                            fill="#fff"
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            style={{ paintOrder: "stroke", stroke: "rgba(0,0,0,0.6)", strokeWidth: 0.6 }}
+                          >
+                            {barrier.label}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
+                )}
               </div>
 
               <div className="heatmap-caption">
