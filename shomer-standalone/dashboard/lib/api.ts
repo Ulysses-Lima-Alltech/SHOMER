@@ -216,6 +216,18 @@ export function getHourly(): Promise<HourlyPoint[]> {
   return request<HourlyPoint[]>("/stats/hourly");
 }
 
+export interface Last24HourPoint {
+  bucketStart: string;
+  count: number;
+}
+
+/** Volume por hora numa janela deslizante das últimas 24h (não reseta à
+ * meia-noite como getHourly — sempre mostra as 24h mais recentes). */
+export function getLast24Hours(tenantId?: string): Promise<Last24HourPoint[]> {
+  const qs = tenantId ? `?tenantId=${encodeURIComponent(tenantId)}` : "";
+  return request<Last24HourPoint[]>(`/stats/last-24h${qs}`);
+}
+
 export function getMovement(): Promise<MovementBucket[]> {
   return request<MovementBucket[]>("/stats/movement");
 }

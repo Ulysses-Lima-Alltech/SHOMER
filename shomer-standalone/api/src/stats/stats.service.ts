@@ -8,6 +8,13 @@ export interface HourlyPoint {
   count: number;
 }
 
+export interface Last24HourPoint {
+  /** Início do balde de 1h, em UTC (ISO 8601) — o dashboard converte para
+   * o horário local do navegador na hora de exibir. */
+  bucketStart: string;
+  count: number;
+}
+
 export interface MovementBucket {
   period: string;
   label: 'Baixo' | 'Médio' | 'Alto';
@@ -221,6 +228,42 @@ export class StatsService {
       hour,
       count: byHour.get(hour) ?? 0,
     }));
+  }
+
+  /**
+   * Volume por hora numa janela deslizante das últimas 24 horas (ao
+   * contrário de getHourly, que é "hoje" no fuso da loja e reseta à
+   * meia-noite). Cada balde é uma hora cheia em UTC — o timestamp gravado
+   * já é UTC, então não precisa converter fuso aqui; o dashboard formata
+   * cada bucketStart no horário local do navegador na hora de exibir.
+   */
+  async getLast24Hours(tenantId: string): Promise<Last24HourPoint[]> {
+    const rows = await this.clickhouse.queryRows<{ bucket: string; count: string }>(
+      `SELECT formatDateTime(toStartOfHour(timestamp), '%Y-%m-%dT%H:%i:%S.000Z') AS bucket, count() AS count
+       FROM events
+       WHERE tenant_id = {tenantId:String}
+         AND type = 'person.detected'
+         AND timestamp >= now() - INTERVAL 24 HOUR
+       GROUP BY bucket
+       ORDER BY bucket`,
+      { tenantId },
+    );
+
+    const byBucket = new Map(rows.map((r) => [r.bucket, Number(r.count)]));
+
+    // Gera os 24 baldes horários — da hora cheia atual até 23h atrás —
+    // preenchendo com zero onde não há eventos, pra sempre ter 24 pontos
+    // mesmo em janelas sem nenhum evento.
+    const currentHourStart = new Date();
+    currentHourStart.setUTCMinutes(0, 0, 0);
+
+    const points: Last24HourPoint[] = [];
+    for (let i = 23; i >= 0; i--) {
+      const bucketDate = new Date(currentHourStart.getTime() - i * 60 * 60 * 1000);
+      const bucketStart = bucketDate.toISOString().replace(/\.\d{3}Z$/, '.000Z');
+      points.push({ bucketStart, count: byBucket.get(bucketStart) ?? 0 });
+    }
+    return points;
   }
 
   async getMovement(tenantId: string): Promise<MovementBucket[]> {
