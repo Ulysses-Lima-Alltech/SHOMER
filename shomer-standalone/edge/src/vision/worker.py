@@ -3,7 +3,7 @@ import logging
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Callable
+from typing import Any, Callable
 
 from src.config import Settings
 from src.analytics.line_crossing import (
@@ -12,6 +12,7 @@ from src.analytics.line_crossing import (
     LineCrossingEvent,
     NormalizedPoint,
 )
+from src.schedule.business_hours import BusinessHoursGate
 from src.vision.camera import CameraCapture, sanitize_error
 from src.vision.detector import PersonTracker
 from src.vision.models import TrackedPerson, VisionStats
@@ -26,12 +27,23 @@ class VisionWorker:
         self,
         settings: Settings,
         crossing_event_sink: Callable[[LineCrossingEvent], None] | None = None,
+        detection_event_sink: Callable[[TrackedPerson], None] | None = None,
+        business_hours_gate: BusinessHoursGate | None = None,
     ) -> None:
         self.settings = settings
         self.crossing_event_sink = crossing_event_sink
+        self.detection_event_sink = detection_event_sink
+        self.business_hours_gate = business_hours_gate
+        self.detection_min_interval_seconds = getattr(
+            settings, "DETECTION_EVENTS_MIN_INTERVAL_SECONDS", 3.0
+        )
+        self._last_detection_emit: dict[int, float] = {}
         self.camera = CameraCapture(
             source=settings.RESOLVED_CAMERA_SOURCE,
             reconnect_seconds=settings.CAMERA_RECONNECT_SECONDS,
+            reconnect_max_seconds=getattr(
+                settings, "CAMERA_RECONNECT_MAX_SECONDS", None
+            ),
         )
         self.detector = PersonTracker(
             model_name=settings.YOLO_MODEL,
@@ -68,6 +80,7 @@ class VisionWorker:
         self.last_error: str | None = None
         self._model_error: str | None = None
         self._had_camera_disconnect = False
+        self._latest_frame: Any | None = None
 
     async def start(self) -> None:
         with self._lock:
@@ -121,6 +134,23 @@ class VisionWorker:
                 last_error=self.last_error,
             )
 
+    def get_latest_frame_jpeg(self) -> bytes | None:
+        """Encodes the most recently captured frame as JPEG.
+
+        Used as the background image for the heatmap overlay in the
+        dashboard - a single still image, not a live stream.
+        """
+        with self._lock:
+            frame = self._latest_frame
+        if frame is None:
+            return None
+        import cv2
+
+        ok, buffer = cv2.imencode(".jpg", frame)
+        if not ok:
+            return None
+        return buffer.tobytes()
+
     def _run(self) -> None:
         try:
             self.detector.load()
@@ -133,8 +163,14 @@ class VisionWorker:
             logger.exception("Vision model initialization failed")
 
         frame_interval = 1.0 / self.settings.VISION_FPS
+        closed_check_interval = 60.0
         try:
             while not self._stop_event.is_set():
+                if self.business_hours_gate is not None and not self.business_hours_gate.is_open_now():
+                    self._handle_closed_hours()
+                    self._sleep(closed_check_interval)
+                    continue
+
                 loop_started = time.monotonic()
                 frame = self.camera.read()
                 self._handle_camera_state(self.camera.connected)
@@ -148,6 +184,7 @@ class VisionWorker:
                 with self._lock:
                     self.frames_processed += 1
                     self.last_frame_at = now
+                    self._latest_frame = frame
                     if self.camera.last_error is None and self._model_error is None:
                         self.last_error = None
 
@@ -164,6 +201,7 @@ class VisionWorker:
                             self.last_detection_at = detected_at
                             self.last_error = None
                         self._publish_crossing_events(crossing_events)
+                        self._publish_detection_events(persons, width, height)
                     except Exception as exc:
                         self._record_error(f"Detection failed: {exc}")
                         logger.warning("Detection failed", exc_info=True)
@@ -189,6 +227,16 @@ class VisionWorker:
                 self.last_error = f"{self._model_error}; {safe_message}"
             else:
                 self.last_error = safe_message or self._model_error
+
+    def _handle_closed_hours(self) -> None:
+        """Fora do horário de funcionamento: libera a câmera (economiza
+        decodificação/rede) e para de rodar detecção. A câmera reconecta
+        sozinha (via CameraCapture.read) assim que o horário reabrir."""
+        if self.camera.connected:
+            self.camera.close()
+            with self._lock:
+                self.camera_connected = False
+            logger.info("Fora do horario de funcionamento - camera pausada")
 
     def _handle_camera_state(self, connected: bool) -> None:
         reset_tracker = False
@@ -221,3 +269,26 @@ class VisionWorker:
                 self.crossing_event_sink(event)
             except Exception:
                 logger.exception("Crossing event sink failed")
+
+    def _publish_detection_events(
+        self, persons: list[TrackedPerson], frame_width: int, frame_height: int
+    ) -> None:
+        if self.detection_event_sink is None:
+            return
+        now = time.monotonic()
+        current_ids = {person.track_id for person in persons}
+        # Forget tracks that left the frame so a re-appearing track_id emits
+        # right away instead of waiting out a stale cooldown.
+        self._last_detection_emit = {
+            track_id: last for track_id, last in self._last_detection_emit.items()
+            if track_id in current_ids
+        }
+        for person in persons:
+            last_emit = self._last_detection_emit.get(person.track_id)
+            if last_emit is not None and now - last_emit < self.detection_min_interval_seconds:
+                continue
+            self._last_detection_emit[person.track_id] = now
+            try:
+                self.detection_event_sink(person, frame_width, frame_height)
+            except Exception:
+                logger.exception("Detection event sink failed")

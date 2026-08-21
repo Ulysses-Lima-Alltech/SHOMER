@@ -7,6 +7,16 @@ import random
 from typing import Dict, Any
 
 
+
+# Zonas "quentes" fictícias (entrada, corredor central, caixa) para o mock
+# gerar um heatmap plausível em dev/demo, sem depender de câmera real.
+_MOCK_HOTSPOTS = [
+    (0.15, 0.85),  # entrada
+    (0.5, 0.5),    # corredor central
+    (0.85, 0.25),  # caixa
+]
+
+
 class MockEventGenerator:
     """Gera eventos sintéticos para modo MOCK"""
 
@@ -18,6 +28,9 @@ class MockEventGenerator:
 
     def generate_doorline_crossed(self) -> Dict[str, Any]:
         """Gera evento doorline_crossed (person.detected)"""
+        hotspot_x, hotspot_y = random.choice(_MOCK_HOTSPOTS)
+        floor_x = min(1.0, max(0.0, random.gauss(hotspot_x, 0.08)))
+        floor_y = min(1.0, max(0.0, random.gauss(hotspot_y, 0.08)))
         return {
             "eventId": str(uuid.uuid4()),
             "timestamp": datetime.utcnow().isoformat() + "Z",
@@ -36,6 +49,7 @@ class MockEventGenerator:
                 },
                 "confidence": round(random.uniform(0.7, 0.95), 2),
                 "isStaff": False,  # Visitante, não staff
+                "floorPoint": {"x": round(floor_x, 4), "y": round(floor_y, 4)},
             },
         }
 

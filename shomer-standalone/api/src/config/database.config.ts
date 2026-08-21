@@ -1,6 +1,8 @@
 import { DataSource, DataSourceOptions } from 'typeorm';
 import * as dotenv from 'dotenv';
 import { User } from '../auth/entities/user.entity';
+import { Tenant } from '../tenants/entities/tenant.entity';
+import { Device } from '../devices/entities/device.entity';
 
 dotenv.config();
 
@@ -13,8 +15,8 @@ export const typeOrmConfig: DataSourceOptions = {
   type: 'postgres',
   url:
     process.env.DATABASE_URL ||
-    'postgresql://shomer:shomer_dev@localhost:5432/shomer',
-  entities: [User],
+    'postgresql://shomer:shomer_dev@localhost:15432/shomer',
+  entities: [User, Tenant, Device],
   migrations: [__dirname + '/../database/migrations/*.{js,ts}'],
   synchronize: false,
   logging: process.env.TYPEORM_LOGGING === 'true',
