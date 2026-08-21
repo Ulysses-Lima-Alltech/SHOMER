@@ -10,10 +10,12 @@ import {
   getDaily,
   getDailyHourlyMatrix,
   getHourlyPattern,
+  getLast24Hours,
   getOverview,
   getStoredUser,
   getTenantSummaries,
   HourlyPoint,
+  Last24HourPoint,
   OverviewStats,
   periodLabel,
   ReportPeriod,
@@ -44,6 +46,19 @@ function formatShortDate(iso: string): string {
 function formatFullDate(iso: string): string {
   const date = new Date(`${iso}T00:00:00`);
   return date.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" });
+}
+
+/** Formata um bucketStart (ISO UTC) no horário local do navegador, ex: "14h". */
+function formatBucketHour(bucketStart: string): string {
+  return `${new Date(bucketStart).getHours().toString().padStart(2, "0")}h`;
+}
+
+/** Rótulo completo pro tooltip: dia + hora, no horário local do navegador. */
+function formatBucketTooltip(bucketStart: string, count: number): string {
+  const date = new Date(bucketStart);
+  const day = date.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
+  const hour = date.getHours().toString().padStart(2, "0");
+  return `${day} ${hour}h — ${count} ${count === 1 ? "visitante" : "visitantes"}`;
 }
 
 /**
@@ -115,6 +130,8 @@ function ClientReportsView() {
   const [range, setRange] = useState<RangeOption>(7);
   const [daily, setDaily] = useState<DailySummary | null>(null);
   const [pattern, setPattern] = useState<HourlyPoint[] | null>(null);
+  const [last24h, setLast24h] = useState<Last24HourPoint[] | null>(null);
+  const [last24hError, setLast24hError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [showExportDialog, setShowExportDialog] = useState(false);
@@ -143,6 +160,25 @@ function ClientReportsView() {
     },
     [router],
   );
+
+  // Independente do seletor de período (7/14/30 dias) — é sempre a janela
+  // móvel das últimas 24h, não afetada pelo range dos outros gráficos.
+  useEffect(() => {
+    getLast24Hours()
+      .then((points) => {
+        setLast24h(points);
+        setLast24hError(null);
+      })
+      .catch((err) => {
+        if (err instanceof ApiError && err.status === 401) {
+          router.replace("/login");
+          return;
+        }
+        setLast24hError(
+          err instanceof Error ? err.message : "Não foi possível carregar o volume por hora.",
+        );
+      });
+  }, [router]);
 
   useEffect(() => {
     load(range);
@@ -174,6 +210,16 @@ function ClientReportsView() {
   const maxPattern = useMemo(
     () => Math.max(1, ...(pattern?.map((p) => p.count) ?? [0])),
     [pattern],
+  );
+
+  const maxLast24h = useMemo(
+    () => Math.max(1, ...(last24h?.map((p) => p.count) ?? [0])),
+    [last24h],
+  );
+
+  const totalLast24h = useMemo(
+    () => (last24h ?? []).reduce((sum, p) => sum + p.count, 0),
+    [last24h],
   );
 
   const todayKey = new Date().toISOString().slice(0, 10);
@@ -279,6 +325,55 @@ function ClientReportsView() {
           </section>
 
           <section className="panel flow-panel">
+            <div className="panel-header">
+              <div>
+                <span className="panel-kicker">VOLUME POR HORA</span>
+                <h2>Últimas 24 horas</h2>
+              </div>
+              {last24h && (
+                <span className="kpi-context" style={{ alignSelf: "center" }}>
+                  {totalLast24h.toLocaleString("pt-BR")} visitantes no total
+                </span>
+              )}
+            </div>
+
+            <p style={{ color: "var(--text-soft)", fontSize: 13, marginTop: 4 }}>
+              Janela móvel, sempre as 24 horas mais recentes — não reseta à
+              meia-noite como o padrão médio abaixo.
+            </p>
+
+            {last24hError ? (
+              <div className="login-error" style={{ marginTop: 12 }}>{last24hError}</div>
+            ) : !last24h ? (
+              <div className="kpi-card skeleton" style={{ height: 160, marginTop: 12 }} />
+            ) : (
+              <>
+                <div className="pattern-chart">
+                  {last24h.map((p) => (
+                    <div
+                      key={p.bucketStart}
+                      className="pattern-bar-col"
+                      title={formatBucketTooltip(p.bucketStart, p.count)}
+                    >
+                      <div
+                        className={`pattern-bar ${p.count === maxLast24h && maxLast24h > 0 ? "is-peak" : ""}`}
+                        style={{ height: `${Math.max(2, (p.count / maxLast24h) * 100)}%` }}
+                      />
+                    </div>
+                  ))}
+                </div>
+                <div className="chart-axis" style={{ marginTop: 8, position: "static" }}>
+                  <span>{formatBucketHour(last24h[0].bucketStart)}</span>
+                  <span>{formatBucketHour(last24h[Math.floor(last24h.length / 4)].bucketStart)}</span>
+                  <span>{formatBucketHour(last24h[Math.floor(last24h.length / 2)].bucketStart)}</span>
+                  <span>{formatBucketHour(last24h[Math.floor((last24h.length * 3) / 4)].bucketStart)}</span>
+                  <span>{formatBucketHour(last24h[last24h.length - 1].bucketStart)} (agora)</span>
+                </div>
+              </>
+            )}
+          </section>
+
+          <section className="panel flow-panel" style={{ marginTop: 18 }}>
             <div className="panel-header">
               <div>
                 <span className="panel-kicker">VISITANTES POR DIA</span>

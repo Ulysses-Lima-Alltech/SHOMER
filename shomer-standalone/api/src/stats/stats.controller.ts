@@ -50,6 +50,14 @@ export class StatsController {
     return this.stats.getHourly(this.resolveTenantId(req, tenantId));
   }
 
+  /** Volume por hora numa janela deslizante das últimas 24h (não reseta à
+   * meia-noite como /hourly) — usado pelo gráfico de Relatórios. */
+  @Get('last-24h')
+  @ApiQuery({ name: 'tenantId', required: false })
+  last24Hours(@Req() req: AuthenticatedRequest, @Query('tenantId') tenantId?: string) {
+    return this.stats.getLast24Hours(this.resolveTenantId(req, tenantId));
+  }
+
   @Get('movement')
   @ApiQuery({ name: 'tenantId', required: false })
   movement(@Req() req: AuthenticatedRequest, @Query('tenantId') tenantId?: string) {
