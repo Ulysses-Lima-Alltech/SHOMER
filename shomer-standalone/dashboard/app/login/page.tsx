@@ -43,7 +43,7 @@ export default function LoginPage() {
       <form className="login-card" onSubmit={handleSubmit}>
         <div className="login-brand">
           {/* eslint-disable-next-line @next/next/no-img-element -- logo estático, sem necessidade de otimização do next/image */}
-          <img src="/shomer-logo-preto.svg" alt="SHOMER" className="login-logo" />
+          <img src="/shomer/shomer-logo-preto.svg" alt="SHOMER" className="login-logo" />
         </div>
 
         <h1>Entrar</h1>

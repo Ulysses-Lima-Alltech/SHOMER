@@ -173,7 +173,7 @@ export default function Shell({ children }: { children: React.ReactNode }) {
           <div className="brand">
             {/* eslint-disable-next-line @next/next/no-img-element -- ícone estático simples, sem necessidade de otimização do next/image */}
             <img
-              src={appearance === "dark" ? "/shomer-icon-branco.svg" : "/shomer-icon-preto.svg"}
+              src={appearance === "dark" ? "/shomer/shomer-icon-branco.svg" : "/shomer/shomer-icon-preto.svg"}
               alt="SHOMER"
               className="brand-mark"
             />

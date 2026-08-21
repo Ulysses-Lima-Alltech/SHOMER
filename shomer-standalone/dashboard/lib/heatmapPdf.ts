@@ -15,7 +15,7 @@ export interface HeatmapPdfParams {
   tenantLabel?: string | null;
 }
 
-const LOGO_URL = "/shomer-logo-preto.png";
+const LOGO_URL = "/shomer/shomer-logo-preto.png";
 const LOGO_ASPECT = 900 / 304; // dimensões reais do PNG cortado em public/ (sem padding)
 
 function loadImage(url: string): Promise<HTMLImageElement | null> {
