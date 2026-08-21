@@ -409,6 +409,28 @@ export function setOperatingHours(tenantId: string, hours: OperatingHours): Prom
   });
 }
 
+export interface StoreLayoutPoint {
+  x: number;
+  y: number;
+}
+
+export interface StoreBarrier {
+  id: string;
+  label: string;
+  points: StoreLayoutPoint[];
+}
+
+export function getStoreLayout(tenantId: string): Promise<StoreBarrier[]> {
+  return request<StoreBarrier[]>(`/tenants/${encodeURIComponent(tenantId)}/store-layout`);
+}
+
+export function setStoreLayout(tenantId: string, barriers: StoreBarrier[]): Promise<StoreBarrier[]> {
+  return request<StoreBarrier[]>(`/tenants/${encodeURIComponent(tenantId)}/store-layout`, {
+    method: "PATCH",
+    body: JSON.stringify({ barriers }),
+  });
+}
+
 /** true se o último evento chegou há menos de `staleMinutes` minutos. */
 export function isSystemLive(lastEventAt: string | null, staleMinutes = 3): boolean {
   if (!lastEventAt) return false;

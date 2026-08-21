@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { OperatingHours, Tenant } from './entities/tenant.entity';
+import { OperatingHours, StoreBarrier, Tenant } from './entities/tenant.entity';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateOperatingHoursDto } from './dto/update-operating-hours.dto';
+import { UpdateStoreLayoutDto } from './dto/update-store-layout.dto';
 
 export interface TenantWithUserCount extends Tenant {
   userCount: number;
@@ -74,5 +75,23 @@ export class TenantsService {
     tenant.operatingHours = hours;
     await this.tenants.save(tenant);
     return hours;
+  }
+
+  async getStoreLayout(id: string): Promise<StoreBarrier[]> {
+    const tenant = await this.tenants.findOne({ where: { id } });
+    if (!tenant) {
+      throw new NotFoundException('Cliente não encontrado');
+    }
+    return tenant.storeLayout ?? [];
+  }
+
+  async setStoreLayout(id: string, dto: UpdateStoreLayoutDto): Promise<StoreBarrier[]> {
+    const tenant = await this.tenants.findOne({ where: { id } });
+    if (!tenant) {
+      throw new NotFoundException('Cliente não encontrado');
+    }
+    tenant.storeLayout = dto.barriers;
+    await this.tenants.save(tenant);
+    return dto.barriers;
   }
 }
