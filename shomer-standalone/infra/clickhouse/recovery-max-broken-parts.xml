@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!--
+  Recuperacao pos-queda de energia (2026-08-22): o desligamento abrupto
+  deixou ~2772 parts corrompidas na tabela shomer.events, acima do limite
+  de seguranca padrao (100) que o ClickHouse usa pra evitar apagar dados
+  em massa por engano. Esse override sobe o limite soh o suficiente pra
+  ele conseguir subir, movendo as parts corrompidas para
+  /var/lib/clickhouse/store/.../detached/ (nao apaga na hora, mas elas
+  saem da tabela ativa).
+-->
+<clickhouse>
+    <merge_tree>
+        <max_suspicious_broken_parts>5000</max_suspicious_broken_parts>
+    </merge_tree>
+</clickhouse>

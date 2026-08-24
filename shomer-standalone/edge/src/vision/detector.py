@@ -141,10 +141,10 @@ class PersonTracker:
 
         try:
             if torch.cuda.is_available():
-                try:
-                    torch.backends.cudnn.benchmark = True
-                except Exception:
-                    logger.debug("cuDNN benchmark configuration unavailable", exc_info=True)
+                # cudnn.benchmark autotunes conv algorithms on first call, but on
+                # some GPUs/driver combos that autotune hangs indefinitely instead
+                # of completing (observed on RTX 50-series/Blackwell) - leave it
+                # off since yolov8n's fixed input size gains little from it anyway.
                 return "cuda:0", True
         except Exception:
             logger.debug("CUDA detection failed; falling back to CPU", exc_info=True)

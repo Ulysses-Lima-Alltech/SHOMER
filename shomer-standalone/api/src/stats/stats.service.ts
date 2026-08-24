@@ -141,33 +141,26 @@ export class StatsService {
     const today = await this.getLocalToday();
     const tz = this.timezone;
 
-    const [visitorsRows, currentRows, peakRows, directionRows, lastEventRows] =
+    const [peakRows, directionRows, lastEventRows] =
       await Promise.all([
-        this.clickhouse.queryRows<{ visitors: string }>(
-          `SELECT count() AS visitors
-           FROM events
-           WHERE tenant_id = {tenantId:String}
-             AND type = 'person.detected'
-             AND toDate(timestamp, {tz:String}) = {today:Date}`,
-          { tenantId, tz, today },
-        ),
-        this.clickhouse.queryRows<{ current: string }>(
-          `SELECT uniqExact(JSONExtractString(payload, 'trackId')) AS current
-           FROM events
-           WHERE tenant_id = {tenantId:String}
-             AND type = 'person.detected'
-             AND timestamp >= now() - INTERVAL 5 MINUTE`,
-          { tenantId },
-        ),
-        this.clickhouse.queryRows<{ hour: string; c: string }>(
-          `SELECT toHour(timestamp, {tz:String}) AS hour, count() AS c
-           FROM events
-           WHERE tenant_id = {tenantId:String}
-             AND type = 'person.detected'
-             AND toDate(timestamp, {tz:String}) = {today:Date}
-           GROUP BY hour
-           ORDER BY c DESC
-           LIMIT 1`,
+        // Pico do dia = maior ocupação simultânea (saldo de entradas-saídas
+        // ao longo do dia), não a hora com mais eventos "detected": raw
+        // detection count multiplica pelo número de câmeras + troca de
+        // track_id do tracker e chega a milhares para uma loja pequena de
+        // verdade (mesmo motivo do currentOccupancy/visitorsToday acima).
+        this.clickhouse.queryRows<{ peak: string; peakHour: string | null }>(
+          `SELECT greatest(0, max(running)) AS peak,
+                  toHour(argMax(ts, running), {tz:String}) AS peakHour
+           FROM (
+             SELECT
+               timestamp AS ts,
+               sum(multiIf(lower(JSONExtractString(payload, 'direction')) = 'enter', 1, -1))
+                 OVER (ORDER BY timestamp ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running
+             FROM events
+             WHERE tenant_id = {tenantId:String}
+               AND type = 'person.line_crossed'
+               AND toDate(timestamp, {tz:String}) = {today:Date}
+           )`,
           { tenantId, tz, today },
         ),
         this.clickhouse.queryRows<{ direction: string; c: string }>(
@@ -199,11 +192,24 @@ export class StatsService {
     );
     const lastEvent = lastEventRows[0]?.lastEvent;
 
+    // currentOccupancy = saldo líquido de cruzamentos de linha hoje
+    // (entradas - saídas), não uniqExact(trackId) numa janela recente: o
+    // track_id do ByteTrack é efêmero (ver line_crossing.py) — se a pessoa
+    // sai de quadro e volta, ganha um id novo, inflando a contagem de
+    // "pessoas distintas" muito acima do real. Cruzamento de linha é um
+    // evento discreto (entrou/saiu) que não se repete pra mesma passagem.
+    const currentOccupancy = Math.max(0, entriesToday - exitsToday);
+
     return {
-      visitorsToday: Number(visitorsRows[0]?.visitors ?? 0),
-      currentOccupancy: Number(currentRows[0]?.current ?? 0),
-      peakToday: Number(peakRows[0]?.c ?? 0),
-      peakHour: peakRows[0] ? Number(peakRows[0].hour) : null,
+      // visitorsToday = entradas hoje, não count(person.detected): o mesmo
+      // motivo do currentOccupancy acima — um visitante gera dezenas de
+      // eventos "detected" (um a cada poucos segundos enquanto está em
+      // quadro, multiplicado por troca de track_id), então contar esses
+      // eventos brutos não é "quantidade de visitantes".
+      visitorsToday: entriesToday,
+      currentOccupancy,
+      peakToday: Number(peakRows[0]?.peak ?? 0),
+      peakHour: entriesToday + exitsToday > 0 ? Number(peakRows[0]?.peakHour) : null,
       entriesToday,
       exitsToday,
       lastEventAt: lastEvent && lastEvent !== '1970-01-01T00:00:00.000Z' ? lastEvent : null,
@@ -238,11 +244,13 @@ export class StatsService {
    * cada bucketStart no horário local do navegador na hora de exibir.
    */
   async getLast24Hours(tenantId: string): Promise<Last24HourPoint[]> {
+    // Visitantes = entradas, mesmo raciocínio de getDaily/getOverview.
     const rows = await this.clickhouse.queryRows<{ bucket: string; count: string }>(
       `SELECT formatDateTime(toStartOfHour(timestamp), '%Y-%m-%dT%H:%i:%S.000Z') AS bucket, count() AS count
        FROM events
        WHERE tenant_id = {tenantId:String}
-         AND type = 'person.detected'
+         AND type = 'person.line_crossed'
+         AND lower(JSONExtractString(payload, 'direction')) = 'enter'
          AND timestamp >= now() - INTERVAL 24 HOUR
        GROUP BY bucket
        ORDER BY bucket`,
@@ -326,11 +334,17 @@ export class StatsService {
     const { fromDate, toDate } = await this.resolveDateWindow(days, from, to);
     const tz = this.timezone;
 
+    // Visitantes = entradas (person.line_crossed, direction=enter), não
+    // count(person.detected): um visitante gera muitos eventos "detected"
+    // enquanto está em quadro (a cada poucos segundos, multiplicado por
+    // troca de track_id do tracker), então isso nunca foi "quantidade de
+    // visitantes" — ver mesmo raciocínio em getOverview.currentOccupancy.
     const rows = await this.clickhouse.queryRows<{ date: string; count: string }>(
       `SELECT toString(toDate(timestamp, {tz:String})) AS date, count() AS count
        FROM events
        WHERE tenant_id = {tenantId:String}
-         AND type = 'person.detected'
+         AND type = 'person.line_crossed'
+         AND lower(JSONExtractString(payload, 'direction')) = 'enter'
          AND toDate(timestamp, {tz:String}) >= {from:Date}
          AND toDate(timestamp, {tz:String}) <= {to:Date}
        GROUP BY date
@@ -559,7 +573,8 @@ export class StatsService {
     }>(
       `SELECT tenant_id,
               countIf(
-                type = 'person.detected'
+                type = 'person.line_crossed'
+                AND lower(JSONExtractString(payload, 'direction')) = 'enter'
                 AND toDate(timestamp, {tz:String}) >= {from:Date}
                 AND toDate(timestamp, {tz:String}) <= {to:Date}
               ) AS visitors,

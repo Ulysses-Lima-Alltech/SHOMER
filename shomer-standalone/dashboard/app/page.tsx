@@ -158,7 +158,7 @@ export default function Dashboard() {
           <div className="kpi-value">
             {overview.visitorsToday.toLocaleString("pt-BR")}
           </div>
-          <span className="kpi-context">detecções registradas hoje</span>
+          <span className="kpi-context">entradas registradas hoje</span>
         </article>
 
         <article className="kpi-card">
@@ -190,12 +190,10 @@ export default function Dashboard() {
               <ArrowsIcon />
             </span>
           </div>
-          <span className="kpi-label">Fluxo</span>
-          <div className="kpi-value">
-            {overview.entriesToday + overview.exitsToday}
-          </div>
+          <span className="kpi-label">Saídas hoje</span>
+          <div className="kpi-value">{overview.exitsToday}</div>
           <span className="kpi-context">
-            {overview.entriesToday} entradas · {overview.exitsToday} saídas
+            {overview.entriesToday} entradas hoje
           </span>
         </article>
       </section>
@@ -216,7 +214,7 @@ export default function Dashboard() {
           <div className="chart-wrap">
             <div className="chart-number">{overview.peakToday}</div>
             <div className="chart-number-caption">
-              maior movimento registrado hoje
+              maior número de pessoas na loja ao mesmo tempo, hoje
             </div>
 
             <svg

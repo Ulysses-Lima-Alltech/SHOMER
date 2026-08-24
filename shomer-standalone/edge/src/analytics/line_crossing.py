@@ -45,6 +45,9 @@ class LineCrossingEvent:
 class TrackCrossingState:
     last_stable_side: Side | None
     last_seen_at: datetime
+    first_seen_at: datetime
+    first_point: "NormalizedPoint"
+    max_displacement: float = 0.0
     last_crossing_at: datetime | None = None
 
 
@@ -77,6 +80,9 @@ class LineCrossingAnalyzer:
         tolerance: float,
         cooldown_seconds: float,
         track_ttl_seconds: float,
+        static_filter_enabled: bool = True,
+        static_min_observation_seconds: float = 8.0,
+        static_max_displacement: float = 0.03,
     ) -> None:
         self.enabled = enabled
         self.line_id = line_id
@@ -86,6 +92,9 @@ class LineCrossingAnalyzer:
         self.tolerance = tolerance
         self.cooldown_seconds = cooldown_seconds
         self.track_ttl_seconds = track_ttl_seconds
+        self.static_filter_enabled = static_filter_enabled
+        self.static_min_observation_seconds = static_min_observation_seconds
+        self.static_max_displacement = static_max_displacement
         self.entries = 0
         self.exits = 0
         self.last_crossing_at: datetime | None = None
@@ -124,10 +133,27 @@ class LineCrossingAnalyzer:
                         current_side if current_side is not Side.ON_LINE else None
                     ),
                     last_seen_at=now,
+                    first_seen_at=now,
+                    first_point=point,
                 )
                 continue
 
             state.last_seen_at = now
+            displacement = math.hypot(
+                point.x - state.first_point.x, point.y - state.first_point.y
+            )
+            if displacement > state.max_displacement:
+                state.max_displacement = displacement
+
+            if self.static_filter_enabled and self._is_static_track(state, now):
+                # Mannequins/props sit near-motionless for many minutes; a track
+                # this stationary is not a person and must not count crossings.
+                # Keep last_stable_side current (without crossing checks) so
+                # behavior is sane if the object is later actually moved.
+                if current_side is not Side.ON_LINE:
+                    state.last_stable_side = current_side
+                continue
+
             if current_side is Side.ON_LINE:
                 continue
             if state.last_stable_side is None:
@@ -218,6 +244,12 @@ class LineCrossingAnalyzer:
             event.track_id,
             event.direction.value,
         )
+
+    def _is_static_track(self, state: TrackCrossingState, now: datetime) -> bool:
+        elapsed = (now - state.first_seen_at).total_seconds()
+        if elapsed < self.static_min_observation_seconds:
+            return False
+        return state.max_displacement < self.static_max_displacement
 
     def _prune_old_tracks(self, now: datetime) -> None:
         expired = [

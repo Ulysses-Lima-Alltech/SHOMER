@@ -88,7 +88,25 @@ class Settings(BaseSettings):
     LINE_CROSSING_ENTER_DIRECTION: str = "A_TO_B"
     LINE_CROSSING_TOLERANCE: float = Field(default=0.02, ge=0.0, le=0.25)
     LINE_CROSSING_COOLDOWN_SECONDS: float = Field(default=1.0, ge=0.0)
-    LINE_CROSSING_TRACK_TTL_SECONDS: float = Field(default=10.0, gt=0.0)
+    # ByteTrack (bytetrack.yaml) keeps a lost track alive for track_buffer=30
+    # frames before dropping it and assigning a new track_id on reappearance
+    # (~6s of real time at the default VISION_FPS=5). Keep this comfortably
+    # above that so our own per-track state does not expire first and mask a
+    # reappearance as a brand-new track under normal occlusions. Set to 15s
+    # so customers who dart in and out of the store quickly (e.g. dropping
+    # something at the car, checking a window display) keep their crossing
+    # state instead of being double-counted as two separate visits.
+    LINE_CROSSING_TRACK_TTL_SECONDS: float = Field(default=15.0, gt=0.0)
+
+    # Filters out tracks that barely move (mannequins, chairs, other static
+    # objects YOLO occasionally misclassifies as "person") from line-crossing
+    # and visitor counting. A track is treated as static once it has been
+    # observed for STATIC_OBJECT_MIN_OBSERVATION_SECONDS without moving more
+    # than STATIC_OBJECT_MAX_DISPLACEMENT (normalized coordinates) from where
+    # it first appeared. Raw detections are unaffected.
+    STATIC_OBJECT_FILTER_ENABLED: bool = True
+    STATIC_OBJECT_MIN_OBSERVATION_SECONDS: float = Field(default=8.0, gt=0.0)
+    STATIC_OBJECT_MAX_DISPLACEMENT: float = Field(default=0.03, ge=0.0)
 
     CROSSING_EVENTS_ENABLED: bool = False
     # Publica um evento person.detected por pessoa rastreada, no maximo a

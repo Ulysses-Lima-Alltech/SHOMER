@@ -66,6 +66,15 @@ class VisionWorker:
             tolerance=settings.LINE_CROSSING_TOLERANCE,
             cooldown_seconds=settings.LINE_CROSSING_COOLDOWN_SECONDS,
             track_ttl_seconds=settings.LINE_CROSSING_TRACK_TTL_SECONDS,
+            static_filter_enabled=getattr(
+                settings, "STATIC_OBJECT_FILTER_ENABLED", True
+            ),
+            static_min_observation_seconds=getattr(
+                settings, "STATIC_OBJECT_MIN_OBSERVATION_SECONDS", 8.0
+            ),
+            static_max_displacement=getattr(
+                settings, "STATIC_OBJECT_MAX_DISPLACEMENT", 0.03
+            ),
         )
         self._lock = threading.Lock()
         self._stop_event = threading.Event()

@@ -47,6 +47,9 @@ def analyzer(
     tolerance: float = 0.02,
     cooldown: float = 1.0,
     ttl: float = 10.0,
+    static_filter_enabled: bool = True,
+    static_min_observation_seconds: float = 8.0,
+    static_max_displacement: float = 0.03,
 ) -> LineCrossingAnalyzer:
     return LineCrossingAnalyzer(
         enabled=enabled,
@@ -57,6 +60,9 @@ def analyzer(
         tolerance=tolerance,
         cooldown_seconds=cooldown,
         track_ttl_seconds=ttl,
+        static_filter_enabled=static_filter_enabled,
+        static_min_observation_seconds=static_min_observation_seconds,
+        static_max_displacement=static_max_displacement,
     )
 
 
@@ -397,6 +403,54 @@ class LineCrossingTests(unittest.TestCase):
 
         self.assertEqual(point.x, 0.05)
         self.assertEqual(point.y, 1.2)
+
+    def test_static_object_never_counts_line_crossing(self):
+        # Mimics a mannequin: sits still near the line, then a small bbox
+        # jitter (not real movement) nudges it across the dead zone.
+        subject = analyzer(
+            tolerance=0.005,
+            static_min_observation_seconds=5.0,
+            static_max_displacement=0.03,
+        )
+
+        process_one(subject, 99, 50, 51, 0)
+        process_one(subject, 99, 50, 51, 2)
+        process_one(subject, 99, 50, 51, 4)
+        events = process_one(subject, 99, 50, 49, 6)
+        more_events = process_one(subject, 99, 50, 51, 8)
+
+        self.assertEqual(events, [])
+        self.assertEqual(more_events, [])
+        self.assertEqual(subject.stats().entries, 0)
+        self.assertEqual(subject.stats().exits, 0)
+
+    def test_real_person_crossing_past_static_window_still_counts(self):
+        # A person who happens to still be walking after the static
+        # observation window must not be mistaken for a static object: real
+        # displacement disqualifies the static classification.
+        subject = analyzer(static_min_observation_seconds=5.0, static_max_displacement=0.03)
+
+        process_one(subject, 20, 50, 80, 0)
+        events = process_one(subject, 20, 50, 20, 6)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].direction, CrossingDirection.ENTER)
+        self.assertEqual(subject.stats().entries, 1)
+
+    def test_brief_track_gap_does_not_duplicate_count(self):
+        # A short tracking gap (occlusion) within the track TTL must not
+        # reset crossing state and cause the same physical crossing to be
+        # counted twice once the track reappears.
+        subject = analyzer(ttl=15.0, cooldown=1.0)
+
+        process_one(subject, 30, 50, 80, 0)
+        subject.process([], FRAME_WIDTH, FRAME_HEIGHT, now=BASE_TIME + timedelta(seconds=2))
+        events = process_one(subject, 30, 50, 20, 4)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].direction, CrossingDirection.ENTER)
+        self.assertEqual(subject.stats().entries, 1)
+        self.assertEqual(subject.stats().exits, 0)
 
     def test_status_includes_counters(self):
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))

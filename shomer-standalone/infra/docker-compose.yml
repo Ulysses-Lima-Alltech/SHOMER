@@ -33,12 +33,13 @@ services:
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - ./clickhouse/ddl/events.sql:/docker-entrypoint-initdb.d/events.sql:ro
+      - ./clickhouse/recovery-max-broken-parts.xml:/etc/clickhouse-server/config.d/recovery-max-broken-parts.xml:ro
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "localhost:8123/ping"]
+      test: ["CMD", "wget", "--spider", "-q", "127.0.0.1:8123/ping"]
       interval: 10s
       timeout: 5s
       retries: 5
