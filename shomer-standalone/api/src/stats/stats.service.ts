@@ -141,8 +141,26 @@ export class StatsService {
     const today = await this.getLocalToday();
     const tz = this.timezone;
 
-    const [peakRows, directionRows, lastEventRows] =
+    const [currentRows, peakRows, directionRows, lastEventRows] =
       await Promise.all([
+        // Agora = pessoas distintas detectadas nos ultimos 60s, nao
+        // entradas-saidas de hoje: se o tracking cair e voltar (rede,
+        // reinicio) com gente ja dentro da loja, o saldo de cruzamentos
+        // fica zerado mesmo com gente visivel em quadro - o cliente ve
+        // "Agora: 0" com pessoas na tela ao vivo. Uma janela curta (bem
+        // menor que os 5min do uniqExact antigo) mantem a resposta em
+        // tempo real sem sofrer tanto com troca de track_id efemero do
+        // ByteTrack: a pessoa reemite detected a cada poucos segundos
+        // enquanto estiver em quadro, entao 60s cobre varias reemissoes
+        // mesmo que o track_id mude uma vez por oclusao breve.
+        this.clickhouse.queryRows<{ current: string }>(
+          `SELECT uniqExact(JSONExtractString(payload, 'trackId')) AS current
+           FROM events
+           WHERE tenant_id = {tenantId:String}
+             AND type = 'person.detected'
+             AND timestamp >= now() - INTERVAL 60 SECOND`,
+          { tenantId },
+        ),
         // Pico do dia = maior ocupação simultânea (saldo de entradas-saídas
         // ao longo do dia), não a hora com mais eventos "detected": raw
         // detection count multiplica pelo número de câmeras + troca de
@@ -191,14 +209,7 @@ export class StatsService {
       directionRows.find((r) => r.direction === 'exit')?.c ?? 0,
     );
     const lastEvent = lastEventRows[0]?.lastEvent;
-
-    // currentOccupancy = saldo líquido de cruzamentos de linha hoje
-    // (entradas - saídas), não uniqExact(trackId) numa janela recente: o
-    // track_id do ByteTrack é efêmero (ver line_crossing.py) — se a pessoa
-    // sai de quadro e volta, ganha um id novo, inflando a contagem de
-    // "pessoas distintas" muito acima do real. Cruzamento de linha é um
-    // evento discreto (entrou/saiu) que não se repete pra mesma passagem.
-    const currentOccupancy = Math.max(0, entriesToday - exitsToday);
+    const currentOccupancy = Number(currentRows[0]?.current ?? 0);
 
     return {
       // visitorsToday = entradas hoje, não count(person.detected): o mesmo
