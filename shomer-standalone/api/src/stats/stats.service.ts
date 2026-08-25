@@ -143,22 +143,22 @@ export class StatsService {
 
     const [currentRows, peakRows, directionRows, lastEventRows] =
       await Promise.all([
-        // Agora = pessoas distintas detectadas nos ultimos 60s, nao
+        // Agora = pessoas distintas detectadas nos ultimos 10s, nao
         // entradas-saidas de hoje: se o tracking cair e voltar (rede,
         // reinicio) com gente ja dentro da loja, o saldo de cruzamentos
         // fica zerado mesmo com gente visivel em quadro - o cliente ve
-        // "Agora: 0" com pessoas na tela ao vivo. Uma janela curta (bem
-        // menor que os 5min do uniqExact antigo) mantem a resposta em
-        // tempo real sem sofrer tanto com troca de track_id efemero do
-        // ByteTrack: a pessoa reemite detected a cada poucos segundos
-        // enquanto estiver em quadro, entao 60s cobre varias reemissoes
-        // mesmo que o track_id mude uma vez por oclusao breve.
+        // "Agora: 0" com pessoas na tela ao vivo. O edge reemite
+        // person.detected por track a cada DETECTION_EVENTS_MIN_INTERVAL_SECONDS
+        // (3s por padrao) enquanto a pessoa estiver em quadro, entao uma
+        // janela de 10s cobre 2-3 reemissoes (tolera uma oclusao breve
+        // trocando o track_id) sem ficar tao larga a ponto de continuar
+        // contando alguem que ja saiu ha muito tempo.
         this.clickhouse.queryRows<{ current: string }>(
           `SELECT uniqExact(JSONExtractString(payload, 'trackId')) AS current
            FROM events
            WHERE tenant_id = {tenantId:String}
              AND type = 'person.detected'
-             AND timestamp >= now() - INTERVAL 60 SECOND`,
+             AND timestamp >= now() - INTERVAL 10 SECOND`,
           { tenantId },
         ),
         // Pico do dia = maior ocupação simultânea (saldo de entradas-saídas

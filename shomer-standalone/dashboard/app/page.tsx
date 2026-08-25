@@ -25,7 +25,7 @@ import {
 // ainda uma configuração de capacidade por loja no backend — é um valor
 // fixo até que essa entidade exista no Postgres.
 const STORE_CAPACITY = 88;
-const REFRESH_INTERVAL_MS = 15_000;
+const REFRESH_INTERVAL_MS = 4_000;
 
 interface DashboardData {
   overview: OverviewStats;
