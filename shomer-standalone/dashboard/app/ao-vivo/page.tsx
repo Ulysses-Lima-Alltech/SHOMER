@@ -7,13 +7,20 @@ import {
   CameraOption,
   getCameraStatus,
   getCameras,
-  openDebugStream,
+  getSnapshotBlobUrl,
 } from "../../lib/api";
 import Shell from "../../components/Shell";
 import { PulseIcon } from "../../components/Icons";
 
-// O status (JSON leve) continua em polling - so a imagem virou stream continuo.
+// ATENCAO antes de trocar isso de volta pra stream continuo (openDebugStream):
+// o stream MJPEG derrubou a conta gratuita do ngrok (ERR_NGROK_725, limite de
+// banda do mes) em poucos minutos de uso - o tunel ngrok e o UNICO caminho do
+// Vercel ate a API local, entao isso tirou o dashboard inteiro do ar, nao so
+// essa aba. Voltou pra snapshot em polling (bem mais leve) ate migrar o tunel
+// pra algo sem limite de banda (ex: Cloudflare Tunnel) ou pagar um plano
+// ngrok com mais banda.
 const STATUS_REFRESH_INTERVAL_MS = 1_500;
+const SNAPSHOT_REFRESH_INTERVAL_MS = 3_000;
 
 function formatBool(value: unknown): string {
   return value ? "sim" : "não";
@@ -78,25 +85,29 @@ export default function AoVivoPage() {
     return () => clearInterval(interval);
   }, [cameraId, loadStatus]);
 
-  // Stream continuo (MJPEG) da imagem com as detecções - abre uma conexão
-  // por câmera selecionada, em vez de repuxar um snapshot num intervalo.
+  // Snapshot em polling (não stream contínuo - ver aviso de banda acima).
+  const loadSnapshot = useCallback(async () => {
+    try {
+      const blobUrl = await getSnapshotBlobUrl({ cameraId, debug: true });
+      if (currentBlobUrlRef.current) URL.revokeObjectURL(currentBlobUrlRef.current);
+      currentBlobUrlRef.current = blobUrl;
+      setSnapshotUrl(blobUrl);
+      setSnapshotFailed(false);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        router.replace("/login");
+        return;
+      }
+      setSnapshotFailed(true);
+    }
+  }, [cameraId, router]);
+
   useEffect(() => {
     if (!cameraId) return;
-    setSnapshotFailed(false);
-
-    const close = openDebugStream(
-      cameraId,
-      (blobUrl) => {
-        if (currentBlobUrlRef.current) URL.revokeObjectURL(currentBlobUrlRef.current);
-        currentBlobUrlRef.current = blobUrl;
-        setSnapshotUrl(blobUrl);
-        setSnapshotFailed(false);
-      },
-      () => setSnapshotFailed(true),
-    );
-
-    return close;
-  }, [cameraId]);
+    loadSnapshot();
+    const interval = setInterval(loadSnapshot, SNAPSHOT_REFRESH_INTERVAL_MS);
+    return () => clearInterval(interval);
+  }, [cameraId, loadSnapshot]);
 
   useEffect(() => {
     return () => {
@@ -113,9 +124,10 @@ export default function AoVivoPage() {
           <span className="eyebrow">VALIDAÇÃO AO VIVO</span>
           <h1>O que a câmera está vendo agora.</h1>
           <p>
-            Vídeo contínuo (não fotos atualizando) com as caixas de detecção
-            do modelo — para conferir exatamente o que está sendo contado (e
-            o que está sendo filtrado) em cada câmera.
+            Imagem ao vivo com as caixas de detecção do modelo, atualizada a
+            cada {SNAPSHOT_REFRESH_INTERVAL_MS / 1000}s — para conferir
+            exatamente o que está sendo contado (e o que está sendo
+            filtrado) em cada câmera.
           </p>
         </div>
       </div>
