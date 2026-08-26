@@ -207,16 +207,26 @@ export class StatsService {
     return rows[0]?.today ?? new Date().toISOString().slice(0, 10);
   }
 
-  /** Agora = pessoas distintas detectadas nos ultimos 10s, nao
+  /** Agora = pessoas distintas detectadas nos ultimos 5s, nao
    * entradas-saidas de hoje: se o tracking cair e voltar (rede, reinicio)
    * com gente ja dentro da loja, o saldo de cruzamentos fica zerado mesmo
    * com gente visivel em quadro - o cliente ve "Agora: 0" com pessoas na
    * tela ao vivo. O edge reemite person.detected por track a cada
-   * DETECTION_EVENTS_MIN_INTERVAL_SECONDS (3s por padrao) enquanto a
-   * pessoa estiver em quadro, entao uma janela de 10s cobre 2-3
-   * reemissoes (tolera uma oclusao breve trocando o track_id) sem ficar
-   * tao larga a ponto de continuar contando alguem que ja saiu ha muito
-   * tempo. JSONExtractBool(payload,'isStatic') com chave ausente (eventos
+   * DETECTION_EVENTS_MIN_INTERVAL_SECONDS (2s por padrao) enquanto a
+   * pessoa estiver em quadro.
+   *
+   * A janela era 10s antes, mas isso causava SUPERCONTAGEM: pegamos so a
+   * deteccao mais recente por (camera, track) e so fundimos entre CAMERAS
+   * DIFERENTES (dentro da mesma camera confiamos no track_id do
+   * ByteTrack). Se o ByteTrack troca o id de uma pessoa (perde e reganha o
+   * rastreamento - ainda acontece as vezes mesmo com o tracker ajustado),
+   * o id antigo fica "recente o suficiente" pra continuar contando junto
+   * com o id novo por ate 10s inteiros, dobrando essa pessoa. Uma janela
+   * mais curta (~2.5x o intervalo de publicacao) deixa o id antigo
+   * "envelhecer" e sair da contagem rapido, sem cobrir tantas reemissoes
+   * a ponto do id trocado persistir como dois.
+   *
+   * JSONExtractBool(payload,'isStatic') com chave ausente (eventos
    * antigos) retorna false por padrao no ClickHouse, entao eventos
    * gravados antes desse campo existir continuam contando - aceitavel, o
    * objetivo aqui e so parar de contar manequins daqui pra frente.
@@ -238,7 +248,7 @@ export class StatsService {
        WHERE tenant_id = {tenantId:String}
          AND type = 'person.detected'
          AND NOT JSONExtractBool(payload, 'isStatic')
-         AND timestamp >= now() - INTERVAL 10 SECOND
+         AND timestamp >= now() - INTERVAL 5 SECOND
        ORDER BY timestamp DESC`,
       { tenantId },
     );

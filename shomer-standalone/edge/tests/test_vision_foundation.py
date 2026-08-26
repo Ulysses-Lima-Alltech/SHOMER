@@ -156,6 +156,74 @@ class VisionFoundationTests(unittest.TestCase):
         self.assertIsNotNone(jpeg)
         self.assertTrue(jpeg.startswith(b"\xff\xd8"))  # JPEG magic bytes
 
+    def test_publish_detection_events_tolerates_single_missed_frame(self):
+        from unittest.mock import patch
+
+        worker = VisionWorker(FakeSettings())
+        worker.appearance_reid_enabled = False  # avoid loading the real reid model
+        worker.detection_min_interval_seconds = 2.0
+        calls = []
+        worker.detection_event_sink = lambda *args: calls.append(args)
+
+        def person(track_id):
+            return TrackedPerson(
+                track_id=track_id,
+                bbox=BoundingBox(0, 0, 10, 10),
+                confidence=0.9,
+                timestamp=datetime(2026, 8, 7, tzinfo=timezone.utc),
+            )
+
+        with patch("src.vision.worker.time.monotonic") as fake_time:
+            fake_time.return_value = 0.0
+            worker._publish_detection_events([person(1)], 100, 100)
+            self.assertEqual(len(calls), 1)  # first sighting always publishes
+
+            fake_time.return_value = 0.3
+            worker._publish_detection_events([], 100, 100)  # track briefly missing one frame
+
+            fake_time.return_value = 0.6
+            worker._publish_detection_events([person(1)], 100, 100)
+            # A single missed frame must not reset the cooldown - still
+            # under detection_min_interval_seconds since the first publish.
+            self.assertEqual(len(calls), 1)
+
+            fake_time.return_value = 2.1
+            worker._publish_detection_events([person(1)], 100, 100)
+            # Cooldown has genuinely elapsed now - publishes again.
+            self.assertEqual(len(calls), 2)
+
+    def test_publish_detection_events_forgets_track_after_long_absence(self):
+        from unittest.mock import patch
+
+        worker = VisionWorker(FakeSettings())
+        worker.appearance_reid_enabled = False
+        worker.detection_min_interval_seconds = 2.0
+        calls = []
+        worker.detection_event_sink = lambda *args: calls.append(args)
+
+        def person(track_id):
+            return TrackedPerson(
+                track_id=track_id,
+                bbox=BoundingBox(0, 0, 10, 10),
+                confidence=0.9,
+                timestamp=datetime(2026, 8, 7, tzinfo=timezone.utc),
+            )
+
+        with patch("src.vision.worker.time.monotonic") as fake_time:
+            fake_time.return_value = 0.0
+            worker._publish_detection_events([person(1)], 100, 100)
+            self.assertEqual(len(calls), 1)
+
+            fake_time.return_value = 5.0
+            worker._publish_detection_events([], 100, 100)  # genuinely gone for a while
+
+            fake_time.return_value = 5.2
+            worker._publish_detection_events([person(1)], 100, 100)
+            # Track was gone well past the grace period - a "new" appearance
+            # (could be a different physical person reusing the id) emits
+            # right away instead of waiting out the old cooldown.
+            self.assertEqual(len(calls), 2)
+
     def test_worker_resets_tracker_after_camera_reconnect(self):
         class FakeDetector:
             def __init__(self):

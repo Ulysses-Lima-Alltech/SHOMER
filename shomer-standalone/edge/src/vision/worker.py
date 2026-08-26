@@ -41,6 +41,7 @@ class VisionWorker:
             settings, "DETECTION_EVENTS_MIN_INTERVAL_SECONDS", 3.0
         )
         self._last_detection_emit: dict[int, float] = {}
+        self._last_seen: dict[int, float] = {}
         self.appearance_reid_enabled = getattr(settings, "APPEARANCE_REID_ENABLED", True)
         self.appearance_embedder = AppearanceEmbedder()
         self.camera = CameraCapture(
@@ -335,12 +336,21 @@ class VisionWorker:
         if self.detection_event_sink is None:
             return
         now = time.monotonic()
-        current_ids = {person.track_id for person in persons}
-        # Forget tracks that left the frame so a re-appearing track_id emits
-        # right away instead of waiting out a stale cooldown.
+        for person in persons:
+            self._last_seen[person.track_id] = now
+        # Forget tracks not seen in a while (not just "missing this exact
+        # frame") so a genuinely re-appearing track_id (after really leaving)
+        # emits right away instead of waiting out a stale cooldown, without
+        # a single missed detection (motion blur, brief occlusion - normal
+        # even with a well-tuned tracker) wiping the cooldown and causing a
+        # burst of publishes well under detection_min_interval_seconds.
+        stale_before = now - max(1.0, self.detection_min_interval_seconds / 2)
+        self._last_seen = {
+            track_id: seen for track_id, seen in self._last_seen.items() if seen >= stale_before
+        }
         self._last_detection_emit = {
             track_id: last for track_id, last in self._last_detection_emit.items()
-            if track_id in current_ids
+            if track_id in self._last_seen
         }
         for person in persons:
             last_emit = self._last_detection_emit.get(person.track_id)
