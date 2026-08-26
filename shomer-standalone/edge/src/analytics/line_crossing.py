@@ -47,6 +47,7 @@ class TrackCrossingState:
     last_seen_at: datetime
     first_seen_at: datetime
     first_point: "NormalizedPoint"
+    last_point: "NormalizedPoint"
     max_displacement: float = 0.0
     last_crossing_at: datetime | None = None
 
@@ -101,6 +102,14 @@ class LineCrossingAnalyzer:
         self.last_crossing_direction: CrossingDirection | None = None
         self.last_crossing_track_id: int | None = None
         self._tracks: dict[int, TrackCrossingState] = {}
+        # Positions already proven static (see _is_static_track), remembered
+        # independently of track_id. A ByteTrack ID for a motionless object
+        # (mannequin, prop) can still churn - lighting change, a passerby
+        # briefly occluding it - and a fresh ID resets its own observation
+        # clock. Without this, every ID swap (and every process restart)
+        # would require the full static_min_observation_seconds again,
+        # letting the object masquerade as a "new person" indefinitely.
+        self._known_static_points: list[NormalizedPoint] = []
         self._line_length = math.hypot(
             self.point_b.x - self.point_a.x,
             self.point_b.y - self.point_a.y,
@@ -135,10 +144,12 @@ class LineCrossingAnalyzer:
                     last_seen_at=now,
                     first_seen_at=now,
                     first_point=point,
+                    last_point=point,
                 )
                 continue
 
             state.last_seen_at = now
+            state.last_point = point
             displacement = math.hypot(
                 point.x - state.first_point.x, point.y - state.first_point.y
             )
@@ -260,10 +271,25 @@ class LineCrossingAnalyzer:
         )
 
     def _is_static_track(self, state: TrackCrossingState, now: datetime) -> bool:
+        if self._is_known_static_point(state.last_point):
+            return True
         elapsed = (now - state.first_seen_at).total_seconds()
         if elapsed < self.static_min_observation_seconds:
             return False
-        return state.max_displacement < self.static_max_displacement
+        is_static = state.max_displacement < self.static_max_displacement
+        if is_static:
+            self._remember_static_point(state.last_point)
+        return is_static
+
+    def _is_known_static_point(self, point: NormalizedPoint) -> bool:
+        return any(
+            math.hypot(point.x - known.x, point.y - known.y) <= self.static_max_displacement
+            for known in self._known_static_points
+        )
+
+    def _remember_static_point(self, point: NormalizedPoint) -> None:
+        if not self._is_known_static_point(point):
+            self._known_static_points.append(point)
 
     def _prune_old_tracks(self, now: datetime) -> None:
         expired = [

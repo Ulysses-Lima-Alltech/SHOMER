@@ -475,6 +475,46 @@ class LineCrossingTests(unittest.TestCase):
 
         self.assertFalse(subject.is_static(20))
 
+    def test_is_static_survives_track_id_churn_at_same_position(self):
+        # A mannequin's ByteTrack id can flip (lighting, brief occlusion) -
+        # once a position has been proven static, a brand-new track_id
+        # appearing at that same spot must be recognized immediately,
+        # without waiting out static_min_observation_seconds again.
+        subject = analyzer(static_min_observation_seconds=5.0, static_max_displacement=0.03)
+
+        process_one(subject, 40, 50, 51, 0)
+        process_one(subject, 40, 50, 51, 6)
+        self.assertTrue(subject.is_static(40))
+
+        # track 40 vanishes (id churn) and a new id appears at the same spot
+        process_one(subject, 41, 50, 51, 6.1)
+        self.assertTrue(subject.is_static(41))
+
+    def test_is_static_survives_process_restart_style_track_reset(self):
+        subject = analyzer(static_min_observation_seconds=5.0, static_max_displacement=0.03)
+
+        process_one(subject, 40, 50, 51, 0)
+        process_one(subject, 40, 50, 51, 6)
+        self.assertTrue(subject.is_static(40))
+
+        subject.reset_tracks()
+
+        # Brand-new track at the same known-static position: recognized
+        # right away even though its own observation clock just started.
+        events = process_one(subject, 99, 50, 51, 6.2)
+        self.assertTrue(subject.is_static(99))
+        self.assertEqual(events, [])
+
+    def test_new_track_at_unrelated_position_still_needs_full_observation(self):
+        subject = analyzer(static_min_observation_seconds=5.0, static_max_displacement=0.03)
+
+        process_one(subject, 40, 50, 51, 0)
+        process_one(subject, 40, 50, 51, 6)
+        self.assertTrue(subject.is_static(40))
+
+        process_one(subject, 50, 20, 20, 6.1)
+        self.assertFalse(subject.is_static(50))
+
     def test_is_static_false_when_filter_disabled(self):
         subject = analyzer(
             static_filter_enabled=False,
