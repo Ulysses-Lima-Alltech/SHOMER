@@ -1,0 +1,13 @@
+# Tracker do SHOMER (ByteTrack) — ajustado a partir do default do ultralytics.
+# Motivo: em cenas com varias pessoas se cruzando, oclusoes curtas (alguem
+# passa atras de outra pessoa por 1-2s) faziam o tracker desistir da track
+# antiga e abrir uma nova id_ao reaparecer, contando a mesma pessoa varias
+# vezes. track_buffer maior segura a track "viva" por mais tempo esperando
+# a pessoa reaparecer antes de descartar.
+tracker_type: bytetrack
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.35
+track_buffer: 90
+match_thresh: 0.8
+fuse_score: True
