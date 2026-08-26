@@ -12,7 +12,7 @@ import {
 import Shell from "../../components/Shell";
 import { PulseIcon } from "../../components/Icons";
 
-const REFRESH_INTERVAL_MS = 3_000;
+const REFRESH_INTERVAL_MS = 1_500;
 
 function formatBool(value: unknown): string {
   return value ? "sim" : "não";

@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { StatsService } from './stats.service';
+import { StatsService, countDistinctPeople, histogramIntersection } from './stats.service';
 import { ClickhouseService } from '../clickhouse/clickhouse.service';
 import { TenantsService } from '../tenants/tenants.service';
 
@@ -46,13 +46,18 @@ describe('StatsService', () => {
     expect(alto?.label).toBe('Alto');
   });
 
-  it('getOverview combina as métricas das cinco consultas', async () => {
+  it('getOverview combina as métricas das quatro consultas (contagem atual, pico, direção, último evento)', async () => {
+    const occupancyRows = Array.from({ length: 8 }, (_, i) => ({
+      cameraId: 'camera-01',
+      trackId: String(i),
+      appearance: null,
+      ts: String(1000 + i),
+    }));
     const queryRows = jest
       .fn()
       .mockResolvedValueOnce([{ today: '2026-08-09' }])
-      .mockResolvedValueOnce([{ visitors: '120' }])
-      .mockResolvedValueOnce([{ current: '8' }])
-      .mockResolvedValueOnce([{ hour: '14', c: '30' }])
+      .mockResolvedValueOnce(occupancyRows)
+      .mockResolvedValueOnce([{ peak: '9', peakHour: '14' }])
       .mockResolvedValueOnce([
         { direction: 'enter', c: '60' },
         { direction: 'exit', c: '52' },
@@ -64,9 +69,9 @@ describe('StatsService', () => {
     const overview = await service.getOverview('tenant-1');
 
     expect(overview).toEqual({
-      visitorsToday: 120,
+      visitorsToday: 60,
       currentOccupancy: 8,
-      peakToday: 30,
+      peakToday: 9,
       peakHour: 14,
       entriesToday: 60,
       exitsToday: 52,
@@ -78,9 +83,8 @@ describe('StatsService', () => {
     const queryRows = jest
       .fn()
       .mockResolvedValueOnce([{ today: '2026-08-09' }])
-      .mockResolvedValueOnce([{ visitors: '0' }])
-      .mockResolvedValueOnce([{ current: '0' }])
       .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ peak: '0', peakHour: null }])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ lastEvent: '1970-01-01T00:00:00.000Z' }]);
     const clickhouse = { queryRows } as unknown as ClickhouseService;
@@ -88,6 +92,7 @@ describe('StatsService', () => {
 
     const overview = await service.getOverview('tenant-1');
 
+    expect(overview.currentOccupancy).toBe(0);
     expect(overview.lastEventAt).toBeNull();
   });
 
@@ -249,5 +254,78 @@ describe('StatsService', () => {
         payload: { trackId: '7' },
       },
     ]);
+  });
+});
+
+describe('histogramIntersection', () => {
+  it('retorna 1 para histogramas identicos', () => {
+    expect(histogramIntersection([0.5, 0.3, 0.2], [0.5, 0.3, 0.2])).toBeCloseTo(1);
+  });
+
+  it('retorna 0 para histogramas sem sobreposicao', () => {
+    expect(histogramIntersection([1, 0], [0, 1])).toBe(0);
+  });
+
+  it('retorna um valor intermediario para histogramas parecidos', () => {
+    const value = histogramIntersection([0.6, 0.4], [0.4, 0.6]);
+    expect(value).toBeCloseTo(0.8);
+  });
+});
+
+describe('countDistinctPeople', () => {
+  it('conta cada (camera, track) separadamente quando nao ha aparencia', () => {
+    const count = countDistinctPeople([
+      { cameraId: 'cam-1', trackId: '1', appearance: null, timestampMs: 1000 },
+      { cameraId: 'cam-2', trackId: '1', appearance: null, timestampMs: 1000 },
+    ]);
+    expect(count).toBe(2);
+  });
+
+  it('funde duas cameras diferentes vendo a mesma pessoa no mesmo instante', () => {
+    const sameColor = [0.9, 0.1];
+    const count = countDistinctPeople([
+      { cameraId: 'cam-1', trackId: '1', appearance: sameColor, timestampMs: 1000 },
+      { cameraId: 'cam-2', trackId: '5', appearance: sameColor, timestampMs: 1500 },
+    ]);
+    expect(count).toBe(1);
+  });
+
+  it('nao funde detecoes distantes no tempo mesmo com aparencia identica', () => {
+    const sameColor = [0.9, 0.1];
+    const count = countDistinctPeople([
+      { cameraId: 'cam-1', trackId: '1', appearance: sameColor, timestampMs: 1000 },
+      { cameraId: 'cam-2', trackId: '5', appearance: sameColor, timestampMs: 10000 },
+    ]);
+    expect(count).toBe(2);
+  });
+
+  it('nao funde cores muito diferentes mesmo no mesmo instante', () => {
+    const count = countDistinctPeople([
+      { cameraId: 'cam-1', trackId: '1', appearance: [1, 0], timestampMs: 1000 },
+      { cameraId: 'cam-2', trackId: '5', appearance: [0, 1], timestampMs: 1000 },
+    ]);
+    expect(count).toBe(2);
+  });
+
+  it('nao funde duas pessoas diferentes na MESMA camera, mesmo com aparencia parecida', () => {
+    const sameColor = [0.9, 0.1];
+    const count = countDistinctPeople([
+      { cameraId: 'cam-1', trackId: '1', appearance: sameColor, timestampMs: 1000 },
+      { cameraId: 'cam-1', trackId: '2', appearance: sameColor, timestampMs: 1000 },
+    ]);
+    expect(count).toBe(2);
+  });
+
+  it('funde tres cameras por transitividade mesmo quando a primeira e a ultima estao fora da janela direta', () => {
+    const sameColor = [0.9, 0.1];
+    // cam-1↔cam-2 e cam-2↔cam-3 estao dentro da janela de 2s, mas
+    // cam-1↔cam-3 sozinhos (diferenca de 3s) nao estariam - o union-find
+    // ainda assim funde os tres num unico grupo via cam-2.
+    const count = countDistinctPeople([
+      { cameraId: 'cam-1', trackId: '1', appearance: sameColor, timestampMs: 0 },
+      { cameraId: 'cam-2', trackId: '2', appearance: sameColor, timestampMs: 1500 },
+      { cameraId: 'cam-3', trackId: '3', appearance: sameColor, timestampMs: 3000 },
+    ]);
+    expect(count).toBe(1);
   });
 });

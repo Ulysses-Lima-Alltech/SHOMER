@@ -20,6 +20,12 @@ class TrackedPerson:
     bbox: BoundingBox
     confidence: float
     timestamp: datetime
+    # Compact HSV color histogram of the cropped person region - a weak
+    # appearance signature used only to match the same physical person seen
+    # by two different (overlapping) cameras at nearly the same instant. Not
+    # a real re-identification embedding (see detector.py); None when a
+    # crop couldn't be produced (e.g. bbox entirely out of frame).
+    appearance: list[float] | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {

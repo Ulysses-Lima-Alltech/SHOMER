@@ -7,6 +7,47 @@ from src.vision.models import BoundingBox, TrackedPerson
 logger = logging.getLogger(__name__)
 
 
+def compute_appearance_histogram(frame: Any, bbox: BoundingBox) -> list[float] | None:
+    """Compact HSV color histogram of the cropped person region.
+
+    A weak appearance signature - clothing/skin color, not a real
+    re-identification embedding - used only to match the same physical
+    person seen by two overlapping cameras within the same second or two
+    (see stats.service.ts currentOccupancy dedup). Returns None when a
+    usable crop can't be produced (no frame, bbox entirely out of frame).
+    """
+    if frame is None:
+        return None
+    try:
+        import cv2
+        import numpy as np
+
+        height, width = frame.shape[:2]
+        if bbox.x2 <= 0 or bbox.y2 <= 0 or bbox.x1 >= width or bbox.y1 >= height:
+            return None  # bbox doesn't overlap the frame at all
+        x1 = max(0, min(width - 1, int(bbox.x1)))
+        y1 = max(0, min(height - 1, int(bbox.y1)))
+        x2 = max(0, min(width, int(bbox.x2)))
+        y2 = max(0, min(height, int(bbox.y2)))
+        if x2 <= x1 or y2 <= y1:
+            return None
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            return None
+
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        hist_h = cv2.calcHist([hsv], [0], None, [16], [0, 180]).flatten()
+        hist_s = cv2.calcHist([hsv], [1], None, [8], [0, 256]).flatten()
+        histogram = np.concatenate([hist_h, hist_s])
+        total = histogram.sum()
+        if total <= 0:
+            return None
+        return [round(float(v), 4) for v in (histogram / total)]
+    except Exception:
+        logger.debug("Appearance histogram computation failed", exc_info=True)
+        return None
+
+
 class PersonTracker:
     """YOLO person detector with Ultralytics ByteTrack persistence."""
 
@@ -79,10 +120,12 @@ class PersonTracker:
             verbose=False,
         )
         first_result = results[0] if results else None
-        return self.parse_result(first_result)
+        return self.parse_result(first_result, frame=frame)
 
     @staticmethod
-    def parse_result(result: Any, timestamp: datetime | None = None) -> list[TrackedPerson]:
+    def parse_result(
+        result: Any, timestamp: datetime | None = None, frame: Any | None = None
+    ) -> list[TrackedPerson]:
         if result is None or getattr(result, "boxes", None) is None:
             return []
 
@@ -101,17 +144,19 @@ class PersonTracker:
             bbox_values = list(raw_bbox)
             if len(bbox_values) < 4:
                 continue
+            bbox = BoundingBox(
+                x1=float(bbox_values[0]),
+                y1=float(bbox_values[1]),
+                x2=float(bbox_values[2]),
+                y2=float(bbox_values[3]),
+            )
             persons.append(
                 TrackedPerson(
                     track_id=int(raw_id),
-                    bbox=BoundingBox(
-                        x1=float(bbox_values[0]),
-                        y1=float(bbox_values[1]),
-                        x2=float(bbox_values[2]),
-                        y2=float(bbox_values[3]),
-                    ),
+                    bbox=bbox,
                     confidence=float(raw_confidence),
                     timestamp=detected_at,
+                    appearance=compute_appearance_histogram(frame, bbox),
                 )
             )
         return persons

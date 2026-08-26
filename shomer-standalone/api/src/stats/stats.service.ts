@@ -21,6 +21,70 @@ export interface MovementBucket {
   value: number;
 }
 
+interface DetectionSample {
+  cameraId: string;
+  trackId: string;
+  appearance: number[] | null;
+  timestampMs: number;
+}
+
+const CROSS_CAMERA_TIME_WINDOW_MS = 2000;
+const CROSS_CAMERA_SIMILARITY_THRESHOLD = 0.7;
+
+/** Intersecção de histograma - barata e suficiente pra decidir "mesma cor
+ * de roupa" dentro de uma janela de tempo curta. Histogramas precisam ter
+ * o mesmo esquema e já vir L1-normalizados (somam ~1) - ver
+ * compute_appearance_histogram no edge (src/vision/detector.py). */
+export function histogramIntersection(a: number[], b: number[]): number {
+  const len = Math.min(a.length, b.length);
+  let sum = 0;
+  for (let i = 0; i < len; i++) sum += Math.min(a[i], b[i]);
+  return sum;
+}
+
+/**
+ * Deduplica detecções da MESMA pessoa física vista por câmeras DIFERENTES
+ * com campo de visão sobreposto, no mesmo instante - achado na aba de
+ * validação ao vivo: "Caixa" e "Roupas" compartilham boa parte da cena, e
+ * cada câmera roda seu próprio ByteTrack sem noção da outra. Dentro de uma
+ * mesma câmera o track_id do ByteTrack já é a fonte da verdade de
+ * identidade - essa função só une clusters entre câmeras diferentes,
+ * comparando proximidade de tempo + similaridade de aparência (cor da
+ * roupa). Não é re-identificação de verdade (sem modelo de embedding),
+ * mas cobre bem o caso de duas câmeras capturando o mesmo instante.
+ * Retorna a contagem de pessoas físicas distintas.
+ */
+export function countDistinctPeople(samples: DetectionSample[]): number {
+  const parent = samples.map((_, i) => i);
+  const find = (x: number): number => {
+    while (parent[x] !== x) {
+      parent[x] = parent[parent[x]];
+      x = parent[x];
+    }
+    return x;
+  };
+  const union = (a: number, b: number) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  };
+
+  for (let i = 0; i < samples.length; i++) {
+    for (let j = i + 1; j < samples.length; j++) {
+      const a = samples[i];
+      const b = samples[j];
+      if (a.cameraId === b.cameraId) continue;
+      if (!a.appearance || !b.appearance) continue;
+      if (Math.abs(a.timestampMs - b.timestampMs) > CROSS_CAMERA_TIME_WINDOW_MS) continue;
+      if (histogramIntersection(a.appearance, b.appearance) >= CROSS_CAMERA_SIMILARITY_THRESHOLD) {
+        union(i, j);
+      }
+    }
+  }
+
+  return new Set(samples.map((_, i) => find(i))).size;
+}
+
 export interface OverviewStats {
   visitorsToday: number;
   currentOccupancy: number;
@@ -137,41 +201,75 @@ export class StatsService {
     return rows[0]?.today ?? new Date().toISOString().slice(0, 10);
   }
 
+  /** Agora = pessoas distintas detectadas nos ultimos 10s, nao
+   * entradas-saidas de hoje: se o tracking cair e voltar (rede, reinicio)
+   * com gente ja dentro da loja, o saldo de cruzamentos fica zerado mesmo
+   * com gente visivel em quadro - o cliente ve "Agora: 0" com pessoas na
+   * tela ao vivo. O edge reemite person.detected por track a cada
+   * DETECTION_EVENTS_MIN_INTERVAL_SECONDS (3s por padrao) enquanto a
+   * pessoa estiver em quadro, entao uma janela de 10s cobre 2-3
+   * reemissoes (tolera uma oclusao breve trocando o track_id) sem ficar
+   * tao larga a ponto de continuar contando alguem que ja saiu ha muito
+   * tempo. JSONExtractBool(payload,'isStatic') com chave ausente (eventos
+   * antigos) retorna false por padrao no ClickHouse, entao eventos
+   * gravados antes desse campo existir continuam contando - aceitavel, o
+   * objetivo aqui e so parar de contar manequins daqui pra frente.
+   * countDistinctPeople funde detecções de câmeras diferentes que são a
+   * mesma pessoa física (câmeras com campo de visão sobreposto). */
+  private async getCurrentOccupancy(tenantId: string): Promise<number> {
+    const rows = await this.clickhouse.queryRows<{
+      cameraId: string;
+      trackId: string;
+      appearance: string | null;
+      ts: string;
+    }>(
+      `SELECT
+         JSONExtractString(payload, 'cameraId') AS cameraId,
+         JSONExtractString(payload, 'trackId') AS trackId,
+         JSONExtractRaw(payload, 'appearance') AS appearance,
+         toUnixTimestamp64Milli(timestamp) AS ts
+       FROM events
+       WHERE tenant_id = {tenantId:String}
+         AND type = 'person.detected'
+         AND NOT JSONExtractBool(payload, 'isStatic')
+         AND timestamp >= now() - INTERVAL 10 SECOND
+       ORDER BY timestamp DESC`,
+      { tenantId },
+    );
+
+    // So a deteccao mais recente por (camera, track) - o ByteTrack ja e a
+    // fonte da verdade de identidade dentro da mesma camera; veio ordenado
+    // DESC, entao a primeira ocorrencia de cada chave ja e a mais recente.
+    const latestByTrack = new Map<string, DetectionSample>();
+    for (const row of rows) {
+      const key = `${row.cameraId}:${row.trackId}`;
+      if (latestByTrack.has(key)) continue;
+      let appearance: number[] | null = null;
+      if (row.appearance) {
+        try {
+          appearance = JSON.parse(row.appearance) as number[];
+        } catch {
+          appearance = null;
+        }
+      }
+      latestByTrack.set(key, {
+        cameraId: row.cameraId,
+        trackId: row.trackId,
+        appearance,
+        timestampMs: Number(row.ts),
+      });
+    }
+
+    return countDistinctPeople([...latestByTrack.values()]);
+  }
+
   async getOverview(tenantId: string): Promise<OverviewStats> {
     const today = await this.getLocalToday();
     const tz = this.timezone;
 
-    const [currentRows, peakRows, directionRows, lastEventRows] =
+    const [currentOccupancy, peakRows, directionRows, lastEventRows] =
       await Promise.all([
-        // Agora = pessoas distintas detectadas nos ultimos 10s, nao
-        // entradas-saidas de hoje: se o tracking cair e voltar (rede,
-        // reinicio) com gente ja dentro da loja, o saldo de cruzamentos
-        // fica zerado mesmo com gente visivel em quadro - o cliente ve
-        // "Agora: 0" com pessoas na tela ao vivo. O edge reemite
-        // person.detected por track a cada DETECTION_EVENTS_MIN_INTERVAL_SECONDS
-        // (3s por padrao) enquanto a pessoa estiver em quadro, entao uma
-        // janela de 10s cobre 2-3 reemissoes (tolera uma oclusao breve
-        // trocando o track_id) sem ficar tao larga a ponto de continuar
-        // contando alguem que ja saiu ha muito tempo.
-        // uniqExact(cameraId, trackId): track_id e local a cada camera (cada
-        // uma comeca a numerar do 1), entao contar so por trackId faz uma
-        // pessoa da camera 1 "colidir" com uma pessoa de valor de id igual
-        // na camera 2 e ser subcontada. Isso soma pessoas de areas
-        // diferentes da loja - correto se as cameras nao se sobrepoem, mas
-        // nao deduplica quem aparece em mais de uma ao mesmo tempo.
-        // JSONExtractBool(payload,'isStatic') com chave ausente (eventos
-        // antigos) retorna false por padrao no ClickHouse, entao eventos
-        // gravados antes desse campo existir continuam contando - aceitavel,
-        // o objetivo aqui e so parar de contar manequins daqui pra frente.
-        this.clickhouse.queryRows<{ current: string }>(
-          `SELECT uniqExact(JSONExtractString(payload, 'cameraId'), JSONExtractString(payload, 'trackId')) AS current
-           FROM events
-           WHERE tenant_id = {tenantId:String}
-             AND type = 'person.detected'
-             AND NOT JSONExtractBool(payload, 'isStatic')
-             AND timestamp >= now() - INTERVAL 10 SECOND`,
-          { tenantId },
-        ),
+        this.getCurrentOccupancy(tenantId),
         // Pico do dia = maior ocupação simultânea (saldo de entradas-saídas
         // ao longo do dia), não a hora com mais eventos "detected": raw
         // detection count multiplica pelo número de câmeras + troca de
@@ -220,7 +318,6 @@ export class StatsService {
       directionRows.find((r) => r.direction === 'exit')?.c ?? 0,
     );
     const lastEvent = lastEventRows[0]?.lastEvent;
-    const currentOccupancy = Number(currentRows[0]?.current ?? 0);
 
     return {
       // visitorsToday = entradas hoje, não count(person.detected): o mesmo

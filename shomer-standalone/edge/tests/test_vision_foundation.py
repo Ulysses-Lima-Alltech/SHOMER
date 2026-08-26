@@ -17,7 +17,7 @@ from src.events.factory import DetectionEventFactory, EdgeHealthEventFactory, Ev
 from src.events.health_reporter import HealthReporter
 from src.schedule.business_hours import BusinessHoursGate
 from src.vision.camera import CameraCapture, sanitize_error
-from src.vision.detector import PersonTracker
+from src.vision.detector import PersonTracker, compute_appearance_histogram
 from src.vision.intelbras import build_intelbras_rtsp_url
 from src.vision.models import BoundingBox, TrackedPerson, VisionStats
 from src.vision.status import status as vision_status
@@ -343,6 +343,83 @@ class VisionFoundationTests(unittest.TestCase):
         ).to_dict()["payload"]
 
         self.assertEqual(payload["isStatic"], True)
+
+    def test_compute_appearance_histogram_returns_none_without_frame(self):
+        bbox = BoundingBox(0, 0, 10, 10)
+        self.assertIsNone(compute_appearance_histogram(None, bbox))
+
+    def test_compute_appearance_histogram_returns_none_for_out_of_frame_bbox(self):
+        import numpy as np
+
+        frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        bbox = BoundingBox(200, 200, 250, 250)
+        self.assertIsNone(compute_appearance_histogram(frame, bbox))
+
+    def test_compute_appearance_histogram_distinguishes_colors(self):
+        import numpy as np
+
+        red_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        red_frame[:, :] = (0, 0, 255)  # BGR - vermelho puro
+        blue_frame = np.zeros((100, 100, 3), dtype=np.uint8)
+        blue_frame[:, :] = (255, 0, 0)  # BGR - azul puro
+        bbox = BoundingBox(10, 10, 90, 90)
+
+        red_hist = compute_appearance_histogram(red_frame, bbox)
+        blue_hist = compute_appearance_histogram(blue_frame, bbox)
+
+        self.assertIsNotNone(red_hist)
+        self.assertIsNotNone(blue_hist)
+        self.assertAlmostEqual(sum(red_hist), 1.0, places=2)
+        self.assertNotEqual(red_hist, blue_hist)
+
+    def test_compute_appearance_histogram_same_color_similar_histogram(self):
+        import numpy as np
+
+        frame_a = np.full((100, 100, 3), (0, 120, 200), dtype=np.uint8)
+        frame_b = np.full((100, 100, 3), (0, 120, 200), dtype=np.uint8)
+        bbox = BoundingBox(0, 0, 100, 100)
+
+        hist_a = compute_appearance_histogram(frame_a, bbox)
+        hist_b = compute_appearance_histogram(frame_b, bbox)
+
+        self.assertEqual(hist_a, hist_b)
+
+    def test_detection_event_factory_includes_appearance_when_present(self):
+        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+        person = TrackedPerson(
+            track_id=3,
+            bbox=BoundingBox(100, 100, 200, 300),
+            confidence=0.9,
+            timestamp=timestamp,
+            appearance=[0.1, 0.2, 0.3],
+        )
+        factory = DetectionEventFactory(
+            EventDeviceContext(
+                tenant_id="tenant-1", store_id=None, camera_id="camera-1", edge_device_id="edge-1"
+            )
+        )
+
+        payload = factory.create(person, frame_width=1000, frame_height=1000).to_dict()["payload"]
+
+        self.assertEqual(payload["appearance"], [0.1, 0.2, 0.3])
+
+    def test_detection_event_factory_omits_appearance_when_absent(self):
+        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+        person = TrackedPerson(
+            track_id=3,
+            bbox=BoundingBox(100, 100, 200, 300),
+            confidence=0.9,
+            timestamp=timestamp,
+        )
+        factory = DetectionEventFactory(
+            EventDeviceContext(
+                tenant_id="tenant-1", store_id=None, camera_id="camera-1", edge_device_id="edge-1"
+            )
+        )
+
+        payload = factory.create(person, frame_width=1000, frame_height=1000).to_dict()["payload"]
+
+        self.assertNotIn("appearance", payload)
 
     def test_edge_health_event_factory_reports_healthy(self):
         factory = EdgeHealthEventFactory(
