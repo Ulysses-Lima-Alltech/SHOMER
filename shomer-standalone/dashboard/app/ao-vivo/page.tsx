@@ -7,12 +7,13 @@ import {
   CameraOption,
   getCameraStatus,
   getCameras,
-  getSnapshotBlobUrl,
+  openDebugStream,
 } from "../../lib/api";
 import Shell from "../../components/Shell";
 import { PulseIcon } from "../../components/Icons";
 
-const REFRESH_INTERVAL_MS = 1_500;
+// O status (JSON leve) continua em polling - so a imagem virou stream continuo.
+const STATUS_REFRESH_INTERVAL_MS = 1_500;
 
 function formatBool(value: unknown): string {
   return value ? "sim" : "não";
@@ -57,33 +58,45 @@ export default function AoVivoPage() {
       });
   }, [router]);
 
-  const load = useCallback(async () => {
+  const loadStatus = useCallback(async () => {
     try {
-      const [blobUrl, statusResult] = await Promise.all([
-        getSnapshotBlobUrl({ cameraId, debug: true }),
-        getCameraStatus(cameraId),
-      ]);
-      if (currentBlobUrlRef.current) URL.revokeObjectURL(currentBlobUrlRef.current);
-      currentBlobUrlRef.current = blobUrl;
-      setSnapshotUrl(blobUrl);
-      setSnapshotFailed(false);
+      const statusResult = await getCameraStatus(cameraId);
       setStatus(statusResult);
       setError(null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         router.replace("/login");
-        return;
       }
-      setSnapshotFailed(true);
+      // silencioso - o painel de status so fica desatualizado, nao e critico
     }
   }, [cameraId, router]);
 
   useEffect(() => {
     if (!cameraId) return;
-    load();
-    const interval = setInterval(load, REFRESH_INTERVAL_MS);
+    loadStatus();
+    const interval = setInterval(loadStatus, STATUS_REFRESH_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [cameraId, load]);
+  }, [cameraId, loadStatus]);
+
+  // Stream continuo (MJPEG) da imagem com as detecções - abre uma conexão
+  // por câmera selecionada, em vez de repuxar um snapshot num intervalo.
+  useEffect(() => {
+    if (!cameraId) return;
+    setSnapshotFailed(false);
+
+    const close = openDebugStream(
+      cameraId,
+      (blobUrl) => {
+        if (currentBlobUrlRef.current) URL.revokeObjectURL(currentBlobUrlRef.current);
+        currentBlobUrlRef.current = blobUrl;
+        setSnapshotUrl(blobUrl);
+        setSnapshotFailed(false);
+      },
+      () => setSnapshotFailed(true),
+    );
+
+    return close;
+  }, [cameraId]);
 
   useEffect(() => {
     return () => {
@@ -100,10 +113,9 @@ export default function AoVivoPage() {
           <span className="eyebrow">VALIDAÇÃO AO VIVO</span>
           <h1>O que a câmera está vendo agora.</h1>
           <p>
-            Imagem ao vivo com as caixas de detecção do modelo, atualizada a
-            cada {REFRESH_INTERVAL_MS / 1000}s — para conferir exatamente o
-            que está sendo contado (e o que está sendo filtrado) em cada
-            câmera.
+            Vídeo contínuo (não fotos atualizando) com as caixas de detecção
+            do modelo — para conferir exatamente o que está sendo contado (e
+            o que está sendo filtrado) em cada câmera.
           </p>
         </div>
       </div>

@@ -370,6 +370,87 @@ export function getCameraStatus(cameraId?: string): Promise<Record<string, unkno
 }
 
 /**
+ * Abre o stream MJPEG (multipart/x-mixed-replace) de detecção ao vivo de
+ * uma câmera - lê como vídeo contínuo, não fotos atualizando num intervalo.
+ * Não dá pra usar <img src="URL do stream"> direto porque a API exige o
+ * header Authorization (a tag <img> não manda headers customizados), então
+ * isso faz um fetch manual e faz o parsing do multipart HTTP na mão,
+ * entregando cada frame como um blob: URL via onFrame - quem chamar deve
+ * revogar a URL anterior antes de usar a nova (mesmo cuidado do
+ * getSnapshotBlobUrl). Retorna uma função de limpeza que fecha a conexão.
+ */
+export function openDebugStream(
+  cameraId: string | undefined,
+  onFrame: (blobUrl: string) => void,
+  onError: (message: string) => void,
+): () => void {
+  const controller = new AbortController();
+  const token = getToken();
+  const qs = cameraId ? `?cameraId=${encodeURIComponent(cameraId)}` : "";
+  const HEADER_END = "\r\n\r\n";
+  const decoder = new TextDecoder();
+
+  (async () => {
+    try {
+      const res = await fetch(`${API_URL}/stats/debug-stream${qs}`, {
+        headers: {
+          "ngrok-skip-browser-warning": "true",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) {
+        onError(`Erro ${res.status}`);
+        return;
+      }
+
+      const reader = res.body.getReader();
+      let buffer = new Uint8Array(0);
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          const merged = new Uint8Array(buffer.length + value.length);
+          merged.set(buffer);
+          merged.set(value, buffer.length);
+          buffer = merged;
+        }
+
+        // Extrai quantos frames completos já estiverem no buffer.
+        for (;;) {
+          const headSlice = buffer.subarray(0, Math.min(buffer.length, 300));
+          const headerEndIdx = decoder.decode(headSlice).indexOf(HEADER_END);
+          if (headerEndIdx === -1) break; // header ainda não chegou por completo
+
+          const headerText = decoder.decode(buffer.subarray(0, headerEndIdx));
+          const lengthMatch = headerText.match(/Content-Length:\s*(\d+)/i);
+          if (!lengthMatch) {
+            buffer = buffer.subarray(headerEndIdx + HEADER_END.length);
+            continue;
+          }
+
+          const contentLength = parseInt(lengthMatch[1], 10);
+          const frameStart = headerEndIdx + HEADER_END.length;
+          const frameEnd = frameStart + contentLength;
+          if (buffer.length < frameEnd) break; // corpo do frame ainda não chegou por completo
+
+          const frameBytes = buffer.slice(frameStart, frameEnd);
+          onFrame(URL.createObjectURL(new Blob([frameBytes], { type: "image/jpeg" })));
+          buffer = buffer.subarray(frameEnd);
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        onError("Conexão com a câmera perdida");
+      }
+    }
+  })();
+
+  return () => controller.abort();
+}
+
+/**
  * Snapshot ao vivo de uma câmera, via proxy autenticado da API (o edge só
  * existe na rede local de quem roda o serviço - o navegador do cliente não
  * alcança direto). debug=true pede a versão com bounding boxes desenhadas

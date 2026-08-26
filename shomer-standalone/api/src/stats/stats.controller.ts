@@ -2,6 +2,7 @@ import { Controller, ForbiddenException, Get, Query, Req, Res, UseGuards } from 
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
+import { Readable } from 'stream';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { StatsService } from './stats.service';
 
@@ -224,6 +225,49 @@ export class StatsController {
       res.send(buffer);
     } catch {
       res.status(502).json({ message: 'Câmera indisponível' });
+    }
+  }
+
+  /**
+   * Proxeia o stream MJPEG (multipart/x-mixed-replace) de detecção ao vivo
+   * de uma câmera - a aba de validação ao vivo usa isso em vez de ficar
+   * repuxando /snapshot num intervalo, então a imagem lê como vídeo
+   * contínuo em vez de fotos atualizando. Faz streaming de verdade (não
+   * bufferiza a resposta inteira, ela nunca termina sozinha) e aborta a
+   * requisição no edge assim que o navegador fecha a conexão.
+   */
+  @Get('debug-stream')
+  @ApiQuery({ name: 'cameraId', required: false })
+  async debugStream(
+    @Req() req: Request,
+    @Res() res: Response,
+    @Query('cameraId') cameraId?: string,
+  ): Promise<void> {
+    const camera = this.resolveCamera(cameraId);
+    const controller = new AbortController();
+    req.on('close', () => controller.abort());
+    try {
+      const edgeRes = await fetch(`${camera.url}/vision/debug_stream`, {
+        signal: controller.signal,
+      });
+      if (!edgeRes.ok || !edgeRes.body) {
+        res.status(502).json({ message: 'Câmera indisponível' });
+        return;
+      }
+      res.setHeader(
+        'Content-Type',
+        edgeRes.headers.get('content-type') ?? 'multipart/x-mixed-replace',
+      );
+      res.setHeader('Cache-Control', 'no-store');
+      const nodeStream = Readable.fromWeb(edgeRes.body as any);
+      nodeStream.on('error', () => res.end());
+      nodeStream.pipe(res);
+    } catch {
+      if (!res.headersSent) {
+        res.status(502).json({ message: 'Câmera indisponível' });
+      } else {
+        res.end();
+      }
     }
   }
 
