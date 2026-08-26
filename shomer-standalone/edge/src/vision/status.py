@@ -9,7 +9,10 @@ from src.events.publisher import EventPublisherStats
 router = APIRouter()
 
 MJPEG_BOUNDARY = b"shomerframe"
-MJPEG_INTERVAL_SECONDS = 0.2  # ~5fps - fluido o suficiente pra parecer video, sem pesar na CPU
+# ~8fps, acompanhando o VISION_FPS padrao (nao ha por que empurrar o stream
+# mais devagar que a propria taxa de deteccao - so estaria descartando
+# frames ja disponiveis).
+MJPEG_INTERVAL_SECONDS = 0.125
 
 
 def _publisher_status(request: Request) -> dict[str, object]:

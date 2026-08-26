@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import time
 from collections.abc import Iterator
@@ -6,6 +7,22 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 _URL_CREDENTIALS_RE = re.compile(r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*://)[^/@\s]+@")
+
+# OpenCV's FFmpeg backend can accumulate real latency over time even with
+# CAP_PROP_BUFFERSIZE=1 - that property isn't honored by every FFmpeg build,
+# and if the camera's native frame rate exceeds VISION_FPS (our consumption
+# rate) even briefly, FFmpeg's own internal demux/decode buffers a backlog
+# that never fully drains, so every "latest" frame we read keeps drifting
+# further behind real time ("Validacao ao vivo" feeling delayed, not live).
+# These flags (read by OpenCV's FFmpeg backend at capture-open time) disable
+# that buffering and let FFmpeg drop frames instead of queuing them when we
+# can't keep up - must be set before any cv2.VideoCapture(..., CAP_FFMPEG)
+# call, so this runs at module import time. setdefault() so an operator can
+# still override via their own environment if needed.
+os.environ.setdefault(
+    "OPENCV_FFMPEG_CAPTURE_OPTIONS",
+    "fflags;nobuffer|flags;low_delay|framedrop;1|max_delay;100000",
+)
 
 
 def sanitize_error(message: str | None) -> str | None:
