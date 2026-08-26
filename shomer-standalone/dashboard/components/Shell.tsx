@@ -67,6 +67,7 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/", label: "Visão geral", enabled: true },
   { href: "/reports", label: "Relatórios", enabled: true },
   { href: "/heatmap", label: "Mapa de calor", enabled: true, hideForSuperAdmin: true },
+  { href: "/ao-vivo", label: "Validação ao vivo", enabled: true, hideForSuperAdmin: true },
   { href: "/eventos", label: "Eventos", enabled: true, hideForSuperAdmin: true },
   { href: "/admin", label: "Administração", enabled: true, adminOnly: true },
   { href: "/configuracoes", label: "Configurações", enabled: true },

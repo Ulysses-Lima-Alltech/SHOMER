@@ -14,6 +14,26 @@ interface AuthenticatedRequest extends Request {
   user: { tenantId: string | null; role: string };
 }
 
+interface EdgeCamera {
+  id: string;
+  label: string;
+  url: string;
+}
+
+/**
+ * Layout fixo das 4 câmeras de produção (tenant 1005) - cada uma roda seu
+ * próprio processo de edge nesta máquina (ver shomer-standalone/start-1005.bat).
+ * Sobrescrevível via EDGE_CAMERAS (JSON) se o layout de câmeras mudar ou
+ * outro tenant precisar de um conjunto diferente. camera-04 vem primeiro
+ * porque é a câmera de referência usada até aqui no mapa de calor.
+ */
+const DEFAULT_EDGE_CAMERAS: EdgeCamera[] = [
+  { id: 'camera-04', label: 'Joias', url: 'http://localhost:8003' },
+  { id: 'camera-01', label: 'Caixa', url: 'http://localhost:8004' },
+  { id: 'camera-02', label: 'Roupas', url: 'http://localhost:8001' },
+  { id: 'camera-03', label: 'Roupas 2', url: 'http://localhost:8002' },
+];
+
 @ApiTags('stats')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard)
@@ -149,23 +169,51 @@ export class StatsController {
     return this.stats.getTenantSummaries(days ? parseDays(days) : 30, from, to);
   }
 
+  /** Lê EDGE_CAMERAS (JSON) se configurado, senão usa o layout fixo padrão. */
+  private getEdgeCameras(): EdgeCamera[] {
+    const raw = this.config.get<string>('EDGE_CAMERAS');
+    if (!raw) return DEFAULT_EDGE_CAMERAS;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as EdgeCamera[];
+    } catch {
+      // JSON invalido no .env - cai pro layout padrao em vez de derrubar o serviço.
+    }
+    return DEFAULT_EDGE_CAMERAS;
+  }
+
+  private resolveCamera(cameraId?: string): EdgeCamera {
+    const cameras = this.getEdgeCameras();
+    return cameras.find((c) => c.id === cameraId) ?? cameras[0];
+  }
+
+  /** Lista de câmeras pra popular o seletor no dashboard - so id/label, a
+   * URL interna (localhost) não é exposta. */
+  @Get('cameras')
+  cameras(): Array<{ id: string; label: string }> {
+    return this.getEdgeCameras().map(({ id, label }) => ({ id, label }));
+  }
+
   /**
-   * Proxeia o snapshot ao vivo do edge (localhost, so acessivel desta
-   * maquina) pro navegador de quem esta logado no dashboard - o dashboard
-   * roda no Vercel, entao nao tem como o navegador do cliente chegar direto
-   * no edge. Usado como imagem de fundo do mapa de calor (referencia visual
-   * dos pontos). EDGE_SNAPSHOT_URL aponta pra uma unica camera "de
-   * referencia" (hoje, a camera 4/canal 4) - nao ha ainda um snapshot por
-   * camera no dashboard.
+   * Proxeia o snapshot ao vivo de uma câmera do edge (localhost, so
+   * acessivel desta maquina) pro navegador de quem esta logado no
+   * dashboard - o dashboard roda no Vercel, entao nao tem como o navegador
+   * do cliente chegar direto no edge. ?debug=true pede o snapshot com
+   * bounding boxes desenhadas (verde = contado, vermelho = filtrado como
+   * objeto estático) - usado na aba de validação ao vivo.
    */
   @Get('snapshot')
-  async snapshot(@Res() res: Response): Promise<void> {
-    const url = this.config.get<string>(
-      'EDGE_SNAPSHOT_URL',
-      'http://localhost:8003/vision/snapshot',
-    );
+  @ApiQuery({ name: 'cameraId', required: false })
+  @ApiQuery({ name: 'debug', required: false })
+  async snapshot(
+    @Res() res: Response,
+    @Query('cameraId') cameraId?: string,
+    @Query('debug') debug?: string,
+  ): Promise<void> {
+    const camera = this.resolveCamera(cameraId);
+    const path = debug === 'true' ? '/vision/debug_snapshot' : '/vision/snapshot';
     try {
-      const edgeRes = await fetch(url);
+      const edgeRes = await fetch(`${camera.url}${path}`);
       if (!edgeRes.ok) {
         res.status(502).json({ message: 'Câmera indisponível' });
         return;
@@ -176,6 +224,24 @@ export class StatsController {
       res.send(buffer);
     } catch {
       res.status(502).json({ message: 'Câmera indisponível' });
+    }
+  }
+
+  /** Status ao vivo (persons_current, entries/exits, camera_connected etc.)
+   * de uma câmera específica do edge - usado na aba de validação ao vivo
+   * pra explicar o que as bounding boxes do snapshot significam. */
+  @Get('camera-status')
+  @ApiQuery({ name: 'cameraId', required: false })
+  async cameraStatus(@Query('cameraId') cameraId?: string): Promise<Record<string, unknown>> {
+    const camera = this.resolveCamera(cameraId);
+    try {
+      const edgeRes = await fetch(`${camera.url}/vision/status`);
+      if (!edgeRes.ok) {
+        return { error: 'Câmera indisponível' };
+      }
+      return (await edgeRes.json()) as Record<string, unknown>;
+    } catch {
+      return { error: 'Câmera indisponível' };
     }
   }
 

@@ -352,15 +352,40 @@ export function getHeatmap(params: {
   return request<HeatmapResult>(`/stats/heatmap${qs ? `?${qs}` : ""}`);
 }
 
+export interface CameraOption {
+  id: string;
+  label: string;
+}
+
+export function getCameras(): Promise<CameraOption[]> {
+  return request<CameraOption[]>("/stats/cameras");
+}
+
+/** Status ao vivo do edge (persons_current, entries/exits, camera_connected
+ * etc.) de uma câmera - forma solta pq o shape vem direto do VisionStats do
+ * edge (ver vision/models.py), não vale a pena duplicar a interface aqui. */
+export function getCameraStatus(cameraId?: string): Promise<Record<string, unknown>> {
+  const qs = cameraId ? `?cameraId=${encodeURIComponent(cameraId)}` : "";
+  return request<Record<string, unknown>>(`/stats/camera-status${qs}`);
+}
+
 /**
- * Snapshot ao vivo da câmera de referência, via proxy autenticado da API
- * (o edge só existe na rede local de quem roda o serviço - o navegador do
- * cliente não alcança direto). Retorna um blob: URL para usar em <img src>;
- * quem chamar deve revogar com URL.revokeObjectURL quando não precisar mais.
+ * Snapshot ao vivo de uma câmera, via proxy autenticado da API (o edge só
+ * existe na rede local de quem roda o serviço - o navegador do cliente não
+ * alcança direto). debug=true pede a versão com bounding boxes desenhadas
+ * (verde = contado, vermelho = filtrado como objeto estático). Retorna um
+ * blob: URL para usar em <img src>; quem chamar deve revogar com
+ * URL.revokeObjectURL quando não precisar mais.
  */
-export async function getSnapshotBlobUrl(): Promise<string> {
+export async function getSnapshotBlobUrl(
+  options: { cameraId?: string; debug?: boolean } = {},
+): Promise<string> {
   const token = getToken();
-  const res = await fetch(`${API_URL}/stats/snapshot`, {
+  const query = new URLSearchParams();
+  if (options.cameraId) query.set("cameraId", options.cameraId);
+  if (options.debug) query.set("debug", "true");
+  const qs = query.toString();
+  const res = await fetch(`${API_URL}/stats/snapshot${qs ? `?${qs}` : ""}`, {
     headers: {
       "ngrok-skip-browser-warning": "true",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
