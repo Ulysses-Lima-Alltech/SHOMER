@@ -306,6 +306,44 @@ class VisionFoundationTests(unittest.TestCase):
 
         self.assertNotIn("floorPoint", payload)
 
+    def test_detection_event_factory_defaults_is_static_false(self):
+        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+        person = TrackedPerson(
+            track_id=3,
+            bbox=BoundingBox(100, 100, 200, 300),
+            confidence=0.9,
+            timestamp=timestamp,
+        )
+        factory = DetectionEventFactory(
+            EventDeviceContext(
+                tenant_id="tenant-1", store_id=None, camera_id="camera-1", edge_device_id="edge-1"
+            )
+        )
+
+        payload = factory.create(person, frame_width=1000, frame_height=1000).to_dict()["payload"]
+
+        self.assertEqual(payload["isStatic"], False)
+
+    def test_detection_event_factory_flags_static_track(self):
+        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
+        person = TrackedPerson(
+            track_id=3,
+            bbox=BoundingBox(100, 100, 200, 300),
+            confidence=0.9,
+            timestamp=timestamp,
+        )
+        factory = DetectionEventFactory(
+            EventDeviceContext(
+                tenant_id="tenant-1", store_id=None, camera_id="camera-1", edge_device_id="edge-1"
+            )
+        )
+
+        payload = factory.create(
+            person, frame_width=1000, frame_height=1000, is_static=True
+        ).to_dict()["payload"]
+
+        self.assertEqual(payload["isStatic"], True)
+
     def test_edge_health_event_factory_reports_healthy(self):
         factory = EdgeHealthEventFactory(
             EventDeviceContext(

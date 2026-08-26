@@ -153,11 +153,21 @@ export class StatsService {
         // janela de 10s cobre 2-3 reemissoes (tolera uma oclusao breve
         // trocando o track_id) sem ficar tao larga a ponto de continuar
         // contando alguem que ja saiu ha muito tempo.
+        // uniqExact(trackId) sem separar por camera: track_id e local a cada
+        // camera (cada uma comeca a numerar do 1), entao com varias cameras
+        // ativas isso soma pessoas de areas diferentes da loja - correto se
+        // as cameras nao se sobrepoem, mas nao deduplica quem aparece em
+        // mais de uma. JSONExtractBool(payload,'isStatic') com chave ausente
+        // (eventos antigos) retorna false por padrao no ClickHouse, entao
+        // eventos gravados antes desse campo existir continuam contando -
+        // aceitavel, o objetivo aqui e so parar de contar manequins daqui
+        // pra frente.
         this.clickhouse.queryRows<{ current: string }>(
           `SELECT uniqExact(JSONExtractString(payload, 'trackId')) AS current
            FROM events
            WHERE tenant_id = {tenantId:String}
              AND type = 'person.detected'
+             AND NOT JSONExtractBool(payload, 'isStatic')
              AND timestamp >= now() - INTERVAL 10 SECOND`,
           { tenantId },
         ),
@@ -484,6 +494,7 @@ export class StatsService {
        FROM events
        WHERE tenant_id = {tenantId:String}
          AND type = 'person.detected'
+         AND NOT JSONExtractBool(payload, 'isStatic')
          AND JSONHas(payload, 'floorPoint')
          AND timestamp >= parseDateTime64BestEffort({from:String})
          AND timestamp < parseDateTime64BestEffort({to:String})

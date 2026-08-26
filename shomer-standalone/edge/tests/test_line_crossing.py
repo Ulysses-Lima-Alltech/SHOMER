@@ -452,6 +452,42 @@ class LineCrossingTests(unittest.TestCase):
         self.assertEqual(subject.stats().entries, 1)
         self.assertEqual(subject.stats().exits, 0)
 
+    def test_is_static_reflects_stationary_track(self):
+        subject = analyzer(
+            tolerance=0.005,
+            static_min_observation_seconds=5.0,
+            static_max_displacement=0.03,
+        )
+
+        self.assertFalse(subject.is_static(99))
+        process_one(subject, 99, 50, 51, 0)
+        self.assertFalse(subject.is_static(99))
+        process_one(subject, 99, 50, 51, 4)
+        self.assertFalse(subject.is_static(99))
+        process_one(subject, 99, 50, 51, 6)
+        self.assertTrue(subject.is_static(99))
+
+    def test_is_static_false_for_moving_track(self):
+        subject = analyzer(static_min_observation_seconds=5.0, static_max_displacement=0.03)
+
+        process_one(subject, 20, 50, 80, 0)
+        process_one(subject, 20, 50, 20, 6)
+
+        self.assertFalse(subject.is_static(20))
+
+    def test_is_static_false_when_filter_disabled(self):
+        subject = analyzer(
+            static_filter_enabled=False,
+            tolerance=0.005,
+            static_min_observation_seconds=5.0,
+            static_max_displacement=0.03,
+        )
+
+        process_one(subject, 99, 50, 51, 0)
+        process_one(subject, 99, 50, 51, 6)
+
+        self.assertFalse(subject.is_static(99))
+
     def test_status_includes_counters(self):
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
         payload = run(vision_status(request))

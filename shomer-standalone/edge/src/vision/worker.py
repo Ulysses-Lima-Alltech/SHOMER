@@ -27,7 +27,7 @@ class VisionWorker:
         self,
         settings: Settings,
         crossing_event_sink: Callable[[LineCrossingEvent], None] | None = None,
-        detection_event_sink: Callable[[TrackedPerson], None] | None = None,
+        detection_event_sink: Callable[[TrackedPerson, int, int, bool], None] | None = None,
         business_hours_gate: BusinessHoursGate | None = None,
     ) -> None:
         self.settings = settings
@@ -118,7 +118,15 @@ class VisionWorker:
 
     def status(self) -> VisionStats:
         with self._lock:
-            track_ids = [person.track_id for person in self.persons_current]
+            # Objetos parados (manequins etc.) nao contam como pessoa aqui,
+            # mesmo que o YOLO os classifique como "person" - mesmo filtro
+            # que ja exclui esses tracks do line crossing.
+            active_persons = [
+                person
+                for person in self.persons_current
+                if not self.line_crossing.is_static(person.track_id)
+            ]
+            track_ids = [person.track_id for person in active_persons]
             line_stats = self.line_crossing.stats()
             return VisionStats(
                 mode=self.settings.MODE,
@@ -126,7 +134,7 @@ class VisionWorker:
                 camera_connected=self.camera_connected,
                 model_ready=self.model_ready,
                 frames_processed=self.frames_processed,
-                persons_current=len(self.persons_current),
+                persons_current=len(active_persons),
                 line_crossing_enabled=line_stats.enabled,
                 entries=line_stats.entries,
                 exits=line_stats.exits,
@@ -298,6 +306,11 @@ class VisionWorker:
                 continue
             self._last_detection_emit[person.track_id] = now
             try:
-                self.detection_event_sink(person, frame_width, frame_height)
+                self.detection_event_sink(
+                    person,
+                    frame_width,
+                    frame_height,
+                    self.line_crossing.is_static(person.track_id),
+                )
             except Exception:
                 logger.exception("Detection event sink failed")

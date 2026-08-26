@@ -181,6 +181,20 @@ class LineCrossingAnalyzer:
             return Side.SIDE_A
         return Side.SIDE_B
 
+    def is_static(self, track_id: int) -> bool:
+        """Whether track_id currently looks like a stationary object (see process()).
+
+        Safe to call for any track_id, including ones not yet/no longer tracked
+        (returns False) - callers use this to tag detection events, not just
+        to gate line-crossing.
+        """
+        if not self.static_filter_enabled:
+            return False
+        state = self._tracks.get(track_id)
+        if state is None:
+            return False
+        return self._is_static_track(state, state.last_seen_at)
+
     def reset_tracks(self) -> None:
         """Clear temporary per-track state without resetting cumulative counters."""
         self._tracks.clear()

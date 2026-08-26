@@ -49,7 +49,11 @@ class DetectionEventFactory:
         self.context = context
 
     def create(
-        self, person: TrackedPerson, frame_width: int, frame_height: int
+        self,
+        person: TrackedPerson,
+        frame_width: int,
+        frame_height: int,
+        is_static: bool = False,
     ) -> EdgeEventEnvelope:
         bbox = person.bbox
         payload: dict = {
@@ -64,6 +68,10 @@ class DetectionEventFactory:
             },
             "confidence": person.confidence,
             "isStaff": False,
+            # Manequim/objeto parado classificado como "person" pelo YOLO
+            # (ver LineCrossingAnalyzer.is_static) - consumidores que contam
+            # "pessoas" (ocupacao atual, mapa de calor) devem excluir.
+            "isStatic": is_static,
         }
         if frame_width > 0 and frame_height > 0:
             # Ponto dos pes (centro-base do bbox), normalizado 0..1 pela
