@@ -198,6 +198,29 @@ export class StatsService {
     return this.config.get<string>('STATS_TIMEZONE', 'America/Sao_Paulo');
   }
 
+  /**
+   * Enquanto a fusão multi-câmera (countDistinctPeople) não estiver confiável
+   * o bastante — câmeras com campo de visão sobreposto ainda geram track_ids
+   * diferentes pra mesma pessoa física com frequência maior do que o
+   * esperado — o cliente pediu pra validar as métricas usando só UMA câmera
+   * (Roupas 2 / camera-03) como fonte da verdade, em vez de somar/fundir as
+   * 4. As 4 câmeras continuam rodando e visíveis na Validação ao vivo; isso
+   * só afeta as métricas agregadas (Agora, entradas/saídas, hoje, série
+   * histórica). Setar STATS_SINGLE_CAMERA_ID vazio/ausente volta ao
+   * comportamento multi-câmera com fusão.
+   */
+  private get singleCameraId(): string | undefined {
+    return this.config.get<string>('STATS_SINGLE_CAMERA_ID') || undefined;
+  }
+
+  /** SQL adicional pra restringir a uma única câmera quando singleCameraId
+   * está setado — string vazia (sem filtro) caso contrário. */
+  private cameraScopeSql(cameraIdParam = 'singleCameraId'): string {
+    return this.singleCameraId
+      ? `AND JSONExtractString(payload, 'cameraId') = {${cameraIdParam}:String}`
+      : '';
+  }
+
   /** Data de "hoje" (YYYY-MM-DD) já no fuso da loja. */
   private async getLocalToday(): Promise<string> {
     const rows = await this.clickhouse.queryRows<{ today: string }>(
@@ -249,8 +272,9 @@ export class StatsService {
          AND type = 'person.detected'
          AND NOT JSONExtractBool(payload, 'isStatic')
          AND timestamp >= now() - INTERVAL 5 SECOND
+         ${this.cameraScopeSql()}
        ORDER BY timestamp DESC`,
-      { tenantId },
+      { tenantId, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
     );
 
     // So a deteccao mais recente por (camera, track) - o ByteTrack ja e a
@@ -303,8 +327,9 @@ export class StatsService {
              WHERE tenant_id = {tenantId:String}
                AND type = 'person.line_crossed'
                AND toDate(timestamp, {tz:String}) = {today:Date}
+               ${this.cameraScopeSql()}
            )`,
-          { tenantId, tz, today },
+          { tenantId, tz, today, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
         ),
         this.clickhouse.queryRows<{ direction: string; c: string }>(
           // O edge grava a direção como ENTER/EXIT (maiúsculo); normaliza
@@ -314,8 +339,9 @@ export class StatsService {
            WHERE tenant_id = {tenantId:String}
              AND type = 'person.line_crossed'
              AND toDate(timestamp, {tz:String}) = {today:Date}
+             ${this.cameraScopeSql()}
            GROUP BY direction`,
-          { tenantId, tz, today },
+          { tenantId, tz, today, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
         ),
         // Qualquer tipo de evento conta para "sistema ativo" — inclui
         // edge.health.reported, não só detecções de pessoas.
@@ -359,9 +385,10 @@ export class StatsService {
        WHERE tenant_id = {tenantId:String}
          AND type = 'person.detected'
          AND toDate(timestamp, {tz:String}) = {today:Date}
+         ${this.cameraScopeSql()}
        GROUP BY hour
        ORDER BY hour`,
-      { tenantId, tz: this.timezone, today },
+      { tenantId, tz: this.timezone, today, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
     );
 
     const byHour = new Map(rows.map((r) => [Number(r.hour), Number(r.count)]));
@@ -387,9 +414,10 @@ export class StatsService {
          AND type = 'person.line_crossed'
          AND lower(JSONExtractString(payload, 'direction')) = 'enter'
          AND timestamp >= now() - INTERVAL 24 HOUR
+         ${this.cameraScopeSql()}
        GROUP BY bucket
        ORDER BY bucket`,
-      { tenantId },
+      { tenantId, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
     );
 
     const byBucket = new Map(rows.map((r) => [r.bucket, Number(r.count)]));
@@ -482,9 +510,10 @@ export class StatsService {
          AND lower(JSONExtractString(payload, 'direction')) = 'enter'
          AND toDate(timestamp, {tz:String}) >= {from:Date}
          AND toDate(timestamp, {tz:String}) <= {to:Date}
+         ${this.cameraScopeSql()}
        GROUP BY date
        ORDER BY date`,
-      { tenantId, tz, from: fromDate, to: toDate },
+      { tenantId, tz, from: fromDate, to: toDate, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
     );
 
     const byDate = new Map(rows.map((r) => [r.date, Number(r.count)]));
@@ -528,9 +557,10 @@ export class StatsService {
          AND type = 'person.detected'
          AND toDate(timestamp, {tz:String}) >= {from:Date}
          AND toDate(timestamp, {tz:String}) <= {to:Date}
+         ${this.cameraScopeSql()}
        GROUP BY date, hour
        ORDER BY date, hour`,
-      { tenantId, tz, from: fromDate, to: toDate },
+      { tenantId, tz, from: fromDate, to: toDate, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
     );
 
     const byDate = new Map<string, number[]>();
@@ -559,11 +589,12 @@ export class StatsService {
            AND type = 'person.detected'
            AND toDate(timestamp, {tz:String}) >= {from:Date}
            AND toDate(timestamp, {tz:String}) <= {to:Date}
+           ${this.cameraScopeSql()}
          GROUP BY date, hour
        )
        GROUP BY hour
        ORDER BY hour`,
-      { tenantId, tz, from: fromDate, to: toDate },
+      { tenantId, tz, from: fromDate, to: toDate, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
     );
 
     const byHour = new Map(rows.map((r) => [Number(r.hour), Number(r.avgCount)]));
