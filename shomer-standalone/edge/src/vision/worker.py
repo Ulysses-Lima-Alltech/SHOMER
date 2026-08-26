@@ -16,6 +16,7 @@ from src.schedule.business_hours import BusinessHoursGate
 from src.vision.camera import CameraCapture, sanitize_error
 from src.vision.detector import PersonTracker
 from src.vision.models import TrackedPerson, VisionStats
+from src.vision.reid import AppearanceEmbedder
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,9 @@ class VisionWorker:
         self,
         settings: Settings,
         crossing_event_sink: Callable[[LineCrossingEvent], None] | None = None,
-        detection_event_sink: Callable[[TrackedPerson, int, int, bool], None] | None = None,
+        detection_event_sink: (
+            Callable[[TrackedPerson, int, int, bool, list[float] | None], None] | None
+        ) = None,
         business_hours_gate: BusinessHoursGate | None = None,
     ) -> None:
         self.settings = settings
@@ -38,6 +41,8 @@ class VisionWorker:
             settings, "DETECTION_EVENTS_MIN_INTERVAL_SECONDS", 3.0
         )
         self._last_detection_emit: dict[int, float] = {}
+        self.appearance_reid_enabled = getattr(settings, "APPEARANCE_REID_ENABLED", True)
+        self.appearance_embedder = AppearanceEmbedder()
         self.camera = CameraCapture(
             source=settings.RESOLVED_CAMERA_SOURCE,
             reconnect_seconds=settings.CAMERA_RECONNECT_SECONDS,
@@ -251,7 +256,7 @@ class VisionWorker:
                             self.last_detection_at = detected_at
                             self.last_error = None
                         self._publish_crossing_events(crossing_events)
-                        self._publish_detection_events(persons, width, height)
+                        self._publish_detection_events(persons, width, height, frame)
                     except Exception as exc:
                         self._record_error(f"Detection failed: {exc}")
                         logger.warning("Detection failed", exc_info=True)
@@ -321,7 +326,11 @@ class VisionWorker:
                 logger.exception("Crossing event sink failed")
 
     def _publish_detection_events(
-        self, persons: list[TrackedPerson], frame_width: int, frame_height: int
+        self,
+        persons: list[TrackedPerson],
+        frame_width: int,
+        frame_height: int,
+        frame: Any = None,
     ) -> None:
         if self.detection_event_sink is None:
             return
@@ -338,12 +347,21 @@ class VisionWorker:
             if last_emit is not None and now - last_emit < self.detection_min_interval_seconds:
                 continue
             self._last_detection_emit[person.track_id] = now
+            # Appearance embedding is only computed here (at the throttled
+            # publish rate), never once per frame - OSNet on CPU costs
+            # ~15-20ms per person, too much to run at the full detection FPS.
+            appearance = (
+                self.appearance_embedder.embed(frame, person.bbox)
+                if self.appearance_reid_enabled
+                else None
+            )
             try:
                 self.detection_event_sink(
                     person,
                     frame_width,
                     frame_height,
                     self.line_crossing.is_static(person.track_id),
+                    appearance,
                 )
             except Exception:
                 logger.exception("Detection event sink failed")

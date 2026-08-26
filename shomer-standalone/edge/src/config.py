@@ -122,6 +122,12 @@ class Settings(BaseSettings):
     # fila/publisher dos eventos de line crossing.
     DETECTION_EVENTS_ENABLED: bool = False
     DETECTION_EVENTS_MIN_INTERVAL_SECONDS: float = Field(default=3.0, ge=0.0)
+    # Calcula um embedding de re-identificacao (OSNet, via boxmot) por
+    # pessoa publicada em person.detected - usado pela API pra reconhecer a
+    # mesma pessoa fisica entre cameras com campo de visao sobreposto (ver
+    # countDistinctPeople). Kill switch rapido: false pula o calculo (custa
+    # ~15-20ms de CPU por pessoa) sem precisar reverter codigo.
+    APPEARANCE_REID_ENABLED: bool = True
     # Publica edge.health.reported periodicamente (independente de
     # CROSSING/DETECTION_EVENTS_ENABLED) para alimentar a tela Monitoramento
     # do dashboard sem depender de acesso direto a rede do cliente.

@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { StatsService, countDistinctPeople, histogramIntersection } from './stats.service';
+import { StatsService, countDistinctPeople, cosineSimilarity } from './stats.service';
 import { ClickhouseService } from '../clickhouse/clickhouse.service';
 import { TenantsService } from '../tenants/tenants.service';
 
@@ -257,18 +257,20 @@ describe('StatsService', () => {
   });
 });
 
-describe('histogramIntersection', () => {
-  it('retorna 1 para histogramas identicos', () => {
-    expect(histogramIntersection([0.5, 0.3, 0.2], [0.5, 0.3, 0.2])).toBeCloseTo(1);
+describe('cosineSimilarity', () => {
+  it('retorna 1 para vetores unitarios identicos', () => {
+    // [0.6, 0.8] tem norma 1 (0.6^2 + 0.8^2 = 1) - como os embeddings do
+    // OSNet, que ja vem L2-normalizados do edge.
+    expect(cosineSimilarity([0.6, 0.8], [0.6, 0.8])).toBeCloseTo(1);
   });
 
-  it('retorna 0 para histogramas sem sobreposicao', () => {
-    expect(histogramIntersection([1, 0], [0, 1])).toBe(0);
+  it('retorna 0 para vetores ortogonais (nenhuma semelhanca)', () => {
+    expect(cosineSimilarity([1, 0], [0, 1])).toBe(0);
   });
 
-  it('retorna um valor intermediario para histogramas parecidos', () => {
-    const value = histogramIntersection([0.6, 0.4], [0.4, 0.6]);
-    expect(value).toBeCloseTo(0.8);
+  it('retorna um valor intermediario para vetores parecidos mas nao identicos', () => {
+    const value = cosineSimilarity([0.6, 0.8], [0.8, 0.6]);
+    expect(value).toBeCloseTo(0.96);
   });
 });
 

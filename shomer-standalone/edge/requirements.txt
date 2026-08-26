@@ -8,6 +8,11 @@ opencv-python-headless
 numpy
 ultralytics
 tzdata
+# Modelo leve de re-identificacao (OSNet) usado por src/vision/reid.py pra
+# reconhecer a mesma pessoa fisica entre cameras com campo de visao
+# sobreposto - ver countDistinctPeople na API. Baixa os pesos (~3MB) do
+# OSNet automaticamente no primeiro uso.
+boxmot
 
 
 

@@ -29,17 +29,22 @@ interface DetectionSample {
 }
 
 const CROSS_CAMERA_TIME_WINDOW_MS = 2000;
-const CROSS_CAMERA_SIMILARITY_THRESHOLD = 0.7;
+// Embeddings do OSNet (edge/src/vision/reid.py) sao vetores unitarios
+// (L2-normalizados), entao similaridade de cosseno = produto escalar direto,
+// no intervalo [-1, 1]. 0.6 e um ponto de partida razoavel pra "mesma
+// pessoa" nesse modelo/resolucao de camera - precisa validar com dados reais
+// assim que as cameras da loja voltarem (rede caiu durante a implementacao
+// desta feature) e ajustar se houver falsos positivos/negativos.
+const CROSS_CAMERA_SIMILARITY_THRESHOLD = 0.6;
 
-/** Intersecção de histograma - barata e suficiente pra decidir "mesma cor
- * de roupa" dentro de uma janela de tempo curta. Histogramas precisam ter
- * o mesmo esquema e já vir L1-normalizados (somam ~1) - ver
- * compute_appearance_histogram no edge (src/vision/detector.py). */
-export function histogramIntersection(a: number[], b: number[]): number {
+/** Similaridade de cosseno entre dois embeddings de re-identificacao. Os
+ * vetores ja vem L2-normalizados do edge (ver AppearanceEmbedder em
+ * src/vision/reid.py), entao isso e so o produto escalar. */
+export function cosineSimilarity(a: number[], b: number[]): number {
   const len = Math.min(a.length, b.length);
-  let sum = 0;
-  for (let i = 0; i < len; i++) sum += Math.min(a[i], b[i]);
-  return sum;
+  let dot = 0;
+  for (let i = 0; i < len; i++) dot += a[i] * b[i];
+  return dot;
 }
 
 /**
@@ -49,9 +54,10 @@ export function histogramIntersection(a: number[], b: number[]): number {
  * cada câmera roda seu próprio ByteTrack sem noção da outra. Dentro de uma
  * mesma câmera o track_id do ByteTrack já é a fonte da verdade de
  * identidade - essa função só une clusters entre câmeras diferentes,
- * comparando proximidade de tempo + similaridade de aparência (cor da
- * roupa). Não é re-identificação de verdade (sem modelo de embedding),
- * mas cobre bem o caso de duas câmeras capturando o mesmo instante.
+ * comparando proximidade de tempo + similaridade do embedding de
+ * re-identificação (OSNet, calculado no edge). Não é um sistema completo de
+ * rastreio multi-câmera com calibração geométrica - cobre bem o caso de
+ * câmeras que compartilham o mesmo espaço e capturam o mesmo instante.
  * Retorna a contagem de pessoas físicas distintas.
  */
 export function countDistinctPeople(samples: DetectionSample[]): number {
@@ -76,7 +82,7 @@ export function countDistinctPeople(samples: DetectionSample[]): number {
       if (a.cameraId === b.cameraId) continue;
       if (!a.appearance || !b.appearance) continue;
       if (Math.abs(a.timestampMs - b.timestampMs) > CROSS_CAMERA_TIME_WINDOW_MS) continue;
-      if (histogramIntersection(a.appearance, b.appearance) >= CROSS_CAMERA_SIMILARITY_THRESHOLD) {
+      if (cosineSimilarity(a.appearance, b.appearance) >= CROSS_CAMERA_SIMILARITY_THRESHOLD) {
         union(i, j);
       }
     }
