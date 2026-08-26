@@ -49,6 +49,13 @@ function formatHour(hour: number): string {
   return `${hour.toString().padStart(2, "0")}h`;
 }
 
+// TEMPORARIO: mesmo motivo do STATS_SINGLE_CAMERA_ID na API (ver
+// stats.service.ts) - câmeras com campo de visão sobreposto ainda não têm
+// fusão multi-câmera confiável, e floorPoint é por câmera (não faz sentido
+// sobrepor pontos de câmeras diferentes na imagem de uma só). Roupas 2 foi
+// escolhida como fonte única enquanto isso não é resolvido.
+const HEATMAP_CAMERA_ID = "camera-03";
+
 function rangeToWindow(range: RangeOption): { from: string; to: string } {
   const to = new Date();
   const from = new Date(to);
@@ -81,7 +88,7 @@ export default function HeatmapPage() {
       try {
         const { from, to } = rangeToWindow(r);
         const [result, pattern] = await Promise.all([
-          getHeatmap({ from, to, gridSize: 24 }),
+          getHeatmap({ from, to, gridSize: 24, cameraId: HEATMAP_CAMERA_ID }),
           getHourlyPattern({ days: rangeToDays(r) }),
         ]);
         setHeatmap(result);
@@ -123,7 +130,7 @@ export default function HeatmapPage() {
 
     const refreshSnapshot = async () => {
       try {
-        const blobUrl = await getSnapshotBlobUrl();
+        const blobUrl = await getSnapshotBlobUrl({ cameraId: HEATMAP_CAMERA_ID });
         if (cancelled) {
           URL.revokeObjectURL(blobUrl);
           return;
