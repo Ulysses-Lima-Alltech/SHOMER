@@ -6,6 +6,7 @@ import {
   ApiError,
   getHeatmap,
   getHourlyPattern,
+  getSnapshotBlobUrl,
   getStoreLayout,
   getStoredUser,
   getTenant,
@@ -17,8 +18,6 @@ import Shell from "../../components/Shell";
 import { PulseIcon } from "../../components/Icons";
 import { drawHeatmap, HeatPoint } from "../../lib/heatmapRenderer";
 import { exportHeatmapPdf } from "../../lib/heatmapPdf";
-
-const EDGE_URL = process.env.NEXT_PUBLIC_EDGE_URL;
 
 type RangeOption = "today" | "24h" | "7d";
 
@@ -119,13 +118,32 @@ export default function HeatmapPage() {
   }, []);
 
   useEffect(() => {
-    if (!EDGE_URL) return;
-    const refreshSnapshot = () => {
-      setSnapshotUrl(`${EDGE_URL}/vision/snapshot?t=${Date.now()}`);
+    let cancelled = false;
+    let currentBlobUrl: string | null = null;
+
+    const refreshSnapshot = async () => {
+      try {
+        const blobUrl = await getSnapshotBlobUrl();
+        if (cancelled) {
+          URL.revokeObjectURL(blobUrl);
+          return;
+        }
+        if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+        currentBlobUrl = blobUrl;
+        setSnapshotUrl(blobUrl);
+        setSnapshotFailed(false);
+      } catch {
+        if (!cancelled) setSnapshotFailed(true);
+      }
     };
+
     refreshSnapshot();
     const interval = setInterval(refreshSnapshot, 30_000);
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+    };
   }, []);
 
   // Desenha (e redesenha ao redimensionar) o canvas de calor — responsivo

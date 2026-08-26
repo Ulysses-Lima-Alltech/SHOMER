@@ -352,6 +352,30 @@ export function getHeatmap(params: {
   return request<HeatmapResult>(`/stats/heatmap${qs ? `?${qs}` : ""}`);
 }
 
+/**
+ * Snapshot ao vivo da câmera de referência, via proxy autenticado da API
+ * (o edge só existe na rede local de quem roda o serviço - o navegador do
+ * cliente não alcança direto). Retorna um blob: URL para usar em <img src>;
+ * quem chamar deve revogar com URL.revokeObjectURL quando não precisar mais.
+ */
+export async function getSnapshotBlobUrl(): Promise<string> {
+  const token = getToken();
+  const res = await fetch(`${API_URL}/stats/snapshot`, {
+    headers: {
+      "ngrok-skip-browser-warning": "true",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) {
+    if (res.status === 401) {
+      clearSession();
+    }
+    throw new ApiError(res.status, `Erro ${res.status}`);
+  }
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
 export interface ManagedDevice {
   id: number;
   tenantId: string;

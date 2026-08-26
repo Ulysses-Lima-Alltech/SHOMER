@@ -1,7 +1,7 @@
-import { Controller, ForbiddenException, Get, Query, Req, UseGuards } from '@nestjs/common';
+import { Controller, ForbiddenException, Get, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
-import { Request } from 'express';
+import { Request, Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { StatsService } from './stats.service';
 
@@ -147,6 +147,36 @@ export class StatsController {
       throw new ForbiddenException('Somente o admin global vê o resumo de todos os clientes');
     }
     return this.stats.getTenantSummaries(days ? parseDays(days) : 30, from, to);
+  }
+
+  /**
+   * Proxeia o snapshot ao vivo do edge (localhost, so acessivel desta
+   * maquina) pro navegador de quem esta logado no dashboard - o dashboard
+   * roda no Vercel, entao nao tem como o navegador do cliente chegar direto
+   * no edge. Usado como imagem de fundo do mapa de calor (referencia visual
+   * dos pontos). EDGE_SNAPSHOT_URL aponta pra uma unica camera "de
+   * referencia" (hoje, a camera 4/canal 4) - nao ha ainda um snapshot por
+   * camera no dashboard.
+   */
+  @Get('snapshot')
+  async snapshot(@Res() res: Response): Promise<void> {
+    const url = this.config.get<string>(
+      'EDGE_SNAPSHOT_URL',
+      'http://localhost:8003/vision/snapshot',
+    );
+    try {
+      const edgeRes = await fetch(url);
+      if (!edgeRes.ok) {
+        res.status(502).json({ message: 'Câmera indisponível' });
+        return;
+      }
+      const buffer = Buffer.from(await edgeRes.arrayBuffer());
+      res.setHeader('Content-Type', edgeRes.headers.get('content-type') ?? 'image/jpeg');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(buffer);
+    } catch {
+      res.status(502).json({ message: 'Câmera indisponível' });
+    }
   }
 
   @Get('edge-health')
