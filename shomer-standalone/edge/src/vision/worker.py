@@ -81,6 +81,9 @@ class VisionWorker:
             static_max_displacement=getattr(
                 settings, "STATIC_OBJECT_MAX_DISPLACEMENT", 0.03
             ),
+            static_dwell_max_gap_seconds=getattr(
+                settings, "STATIC_OBJECT_DWELL_MAX_GAP_SECONDS", 30.0
+            ),
         )
         self._lock = threading.Lock()
         self._stop_event = threading.Event()

@@ -52,6 +52,16 @@ class TrackCrossingState:
     last_crossing_at: datetime | None = None
 
 
+@dataclass
+class _PositionDwell:
+    """Cumulative time something has been detected near a fixed spot,
+    independent of ByteTrack track_id continuity (see _update_position_dwell)."""
+
+    point: "NormalizedPoint"
+    last_seen_at: datetime
+    accumulated_seconds: float = 0.0
+
+
 @dataclass(frozen=True)
 class LineCrossingStats:
     enabled: bool
@@ -84,6 +94,7 @@ class LineCrossingAnalyzer:
         static_filter_enabled: bool = True,
         static_min_observation_seconds: float = 8.0,
         static_max_displacement: float = 0.03,
+        static_dwell_max_gap_seconds: float = 30.0,
     ) -> None:
         self.enabled = enabled
         self.line_id = line_id
@@ -96,6 +107,7 @@ class LineCrossingAnalyzer:
         self.static_filter_enabled = static_filter_enabled
         self.static_min_observation_seconds = static_min_observation_seconds
         self.static_max_displacement = static_max_displacement
+        self.static_dwell_max_gap_seconds = static_dwell_max_gap_seconds
         self.entries = 0
         self.exits = 0
         self.last_crossing_at: datetime | None = None
@@ -103,13 +115,19 @@ class LineCrossingAnalyzer:
         self.last_crossing_track_id: int | None = None
         self._tracks: dict[int, TrackCrossingState] = {}
         # Positions already proven static (see _is_static_track), remembered
-        # independently of track_id. A ByteTrack ID for a motionless object
-        # (mannequin, prop) can still churn - lighting change, a passerby
-        # briefly occluding it - and a fresh ID resets its own observation
-        # clock. Without this, every ID swap (and every process restart)
-        # would require the full static_min_observation_seconds again,
-        # letting the object masquerade as a "new person" indefinitely.
+        # independently of track_id, so once proven an object never needs to
+        # requalify after an ID swap or process restart.
         self._known_static_points: list[NormalizedPoint] = []
+        # Cumulative dwell time per position (see _update_position_dwell),
+        # also independent of track_id. A ByteTrack ID for a motionless
+        # object (mannequin, prop, bag on a chair) churns constantly on
+        # borderline-confidence detections - lighting flicker, a passerby
+        # occluding it - so no single track ever survives long enough to
+        # reach static_min_observation_seconds on its own, and the object
+        # never qualifies via _known_static_points. This tracks total time
+        # anything has been seen near a spot across track_id swaps instead,
+        # as long as gaps stay under static_dwell_max_gap_seconds.
+        self._position_dwell: list[_PositionDwell] = []
         self._line_length = math.hypot(
             self.point_b.x - self.point_a.x,
             self.point_b.y - self.point_a.y,
@@ -134,6 +152,8 @@ class LineCrossingAnalyzer:
         events: list[LineCrossingEvent] = []
         for person in persons:
             point = bottom_center(person, frame_width, frame_height)
+            if self.static_filter_enabled:
+                self._update_position_dwell(point, now)
             current_side = self.side_for_point(point)
             state = self._tracks.get(person.track_id)
             if state is None:
@@ -280,6 +300,25 @@ class LineCrossingAnalyzer:
         if is_static:
             self._remember_static_point(state.last_point)
         return is_static
+
+    def _update_position_dwell(self, point: NormalizedPoint, now: datetime) -> None:
+        bucket = self._find_dwell_bucket(point)
+        if bucket is None:
+            self._position_dwell.append(_PositionDwell(point=point, last_seen_at=now))
+            return
+        gap = (now - bucket.last_seen_at).total_seconds()
+        if 0 < gap <= self.static_dwell_max_gap_seconds:
+            bucket.accumulated_seconds += gap
+        bucket.last_seen_at = now
+        bucket.point = point
+        if bucket.accumulated_seconds >= self.static_min_observation_seconds:
+            self._remember_static_point(bucket.point)
+
+    def _find_dwell_bucket(self, point: NormalizedPoint) -> "_PositionDwell | None":
+        for bucket in self._position_dwell:
+            if math.hypot(point.x - bucket.point.x, point.y - bucket.point.y) <= self.static_max_displacement:
+                return bucket
+        return None
 
     def _is_known_static_point(self, point: NormalizedPoint) -> bool:
         return any(

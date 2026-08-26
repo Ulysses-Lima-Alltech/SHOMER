@@ -50,6 +50,7 @@ def analyzer(
     static_filter_enabled: bool = True,
     static_min_observation_seconds: float = 8.0,
     static_max_displacement: float = 0.03,
+    static_dwell_max_gap_seconds: float = 30.0,
 ) -> LineCrossingAnalyzer:
     return LineCrossingAnalyzer(
         enabled=enabled,
@@ -63,6 +64,7 @@ def analyzer(
         static_filter_enabled=static_filter_enabled,
         static_min_observation_seconds=static_min_observation_seconds,
         static_max_displacement=static_max_displacement,
+        static_dwell_max_gap_seconds=static_dwell_max_gap_seconds,
     )
 
 
@@ -514,6 +516,50 @@ class LineCrossingTests(unittest.TestCase):
 
         process_one(subject, 50, 20, 20, 6.1)
         self.assertFalse(subject.is_static(50))
+
+    def test_is_static_accumulates_across_track_id_churn_no_single_track_survives(self):
+        # Real-world failure mode: a borderline-confidence detection (mannequin,
+        # bag on a chair) flickers in and out of YOLO's output, so its track_id
+        # churns every couple seconds - no single track ever survives long
+        # enough to reach static_min_observation_seconds on its own. Dwell time
+        # at that position must still accumulate across the churn and the spot
+        # must eventually be recognized as static.
+        subject = analyzer(
+            static_min_observation_seconds=10.0,
+            static_max_displacement=0.03,
+            static_dwell_max_gap_seconds=5.0,
+        )
+
+        track_id = 1
+        seconds = 0.0
+        while seconds < 12.0:
+            process_one(subject, track_id, 50, 51, seconds)
+            self.assertFalse(subject.is_static(track_id))
+            seconds += 3.0
+            track_id += 1  # id churns before any single track ages out
+
+        process_one(subject, track_id, 50, 51, seconds)
+        self.assertTrue(subject.is_static(track_id))
+
+    def test_static_dwell_does_not_bridge_a_real_long_absence(self):
+        # If the gap between sightings at a position exceeds
+        # static_dwell_max_gap_seconds, that gap must not count toward the
+        # cumulative total - otherwise an object that was genuinely removed
+        # and only coincidentally replaced later would falsely inherit the
+        # earlier object's dwell time.
+        subject = analyzer(
+            static_min_observation_seconds=10.0,
+            static_max_displacement=0.03,
+            static_dwell_max_gap_seconds=5.0,
+        )
+
+        process_one(subject, 1, 50, 51, 0)
+        process_one(subject, 2, 50, 51, 4)  # gap of 4s < 5s cap: counts
+        self.assertFalse(subject.is_static(2))
+
+        # a 100s gap (well past the cap) before something reappears there
+        process_one(subject, 3, 50, 51, 104)
+        self.assertFalse(subject.is_static(3))
 
     def test_is_static_false_when_filter_disabled(self):
         subject = analyzer(

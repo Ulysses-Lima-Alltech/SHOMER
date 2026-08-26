@@ -115,6 +115,16 @@ class Settings(BaseSettings):
     STATIC_OBJECT_FILTER_ENABLED: bool = True
     STATIC_OBJECT_MIN_OBSERVATION_SECONDS: float = Field(default=300.0, gt=0.0)
     STATIC_OBJECT_MAX_DISPLACEMENT: float = Field(default=0.03, ge=0.0)
+    # A borderline-confidence detection (mannequin, bag on a chair) flickers
+    # in and out of YOLO's output, so its ByteTrack track_id churns well
+    # before any single track survives STATIC_OBJECT_MIN_OBSERVATION_SECONDS
+    # continuously - it never gets flagged static, no matter how long it's
+    # actually been sitting there. LineCrossingAnalyzer tracks cumulative
+    # dwell time per screen position (independent of track_id) to catch this;
+    # this caps how long a gap between sightings at that position can be and
+    # still count toward the total, so a real absence (object removed) resets
+    # the clock instead of being silently bridged.
+    STATIC_OBJECT_DWELL_MAX_GAP_SECONDS: float = Field(default=30.0, gt=0.0)
 
     CROSSING_EVENTS_ENABLED: bool = False
     # Publica um evento person.detected por pessoa rastreada, no maximo a
