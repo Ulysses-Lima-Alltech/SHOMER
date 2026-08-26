@@ -63,3 +63,17 @@ async def snapshot(request: Request) -> Response:
     if jpeg is None:
         raise HTTPException(status_code=503, detail="No frame captured yet")
     return Response(content=jpeg, media_type="image/jpeg")
+
+
+@router.get("/debug_snapshot")
+async def debug_snapshot(request: Request) -> Response:
+    """Latest frame with detection boxes drawn (green = counted, red =
+    filtered as static object) - support/debugging tool, not used by the
+    dashboard."""
+    worker = getattr(request.app.state, "vision_worker", None)
+    if worker is None:
+        raise HTTPException(status_code=404, detail="Vision worker not running (MODE=mock?)")
+    jpeg = worker.get_debug_frame_jpeg()
+    if jpeg is None:
+        raise HTTPException(status_code=503, detail="No frame captured yet")
+    return Response(content=jpeg, media_type="image/jpeg")

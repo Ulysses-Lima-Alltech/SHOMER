@@ -168,6 +168,39 @@ class VisionWorker:
             return None
         return buffer.tobytes()
 
+    def get_debug_frame_jpeg(self) -> bytes | None:
+        """Latest frame with detection boxes drawn - for diagnosing why
+        persons_current does/doesn't match what a human sees in the camera.
+        Green = counted as a person; red = filtered out as a static object
+        (see LineCrossingAnalyzer.is_static). Not used by the dashboard -
+        debugging/support tool only.
+        """
+        import cv2
+
+        with self._lock:
+            frame = self._latest_frame
+            persons = list(self.persons_current)
+        if frame is None:
+            return None
+        frame = frame.copy()
+        for person in persons:
+            static = self.line_crossing.is_static(person.track_id)
+            color = (0, 0, 255) if static else (0, 255, 0)
+            bbox = person.bbox
+            x1, y1, x2, y2 = int(bbox.x1), int(bbox.y1), int(bbox.x2), int(bbox.y2)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            label = f"id={person.track_id} conf={person.confidence:.2f}" + (
+                " STATIC" if static else ""
+            )
+            cv2.putText(
+                frame, label, (x1, max(0, y1 - 8)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2,
+            )
+        ok, buffer = cv2.imencode(".jpg", frame)
+        if not ok:
+            return None
+        return buffer.tobytes()
+
     def _run(self) -> None:
         try:
             self.detector.load()

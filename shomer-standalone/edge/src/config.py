@@ -104,8 +104,16 @@ class Settings(BaseSettings):
     # observed for STATIC_OBJECT_MIN_OBSERVATION_SECONDS without moving more
     # than STATIC_OBJECT_MAX_DISPLACEMENT (normalized coordinates) from where
     # it first appeared. Raw detections are unaffected.
+    #
+    # 8s (the original value) was too short: a customer or staff member
+    # standing at a counter for longer than that - completely normal in a
+    # jewelry store - got misclassified as a static object and vanished
+    # from "Agora"/persons_current. A real person shifts stance, gestures,
+    # or moves on well within a few minutes; a mannequin never moves.
+    # 5 minutes gives real people a wide margin while still catching
+    # mannequins, which are static for the entire business day.
     STATIC_OBJECT_FILTER_ENABLED: bool = True
-    STATIC_OBJECT_MIN_OBSERVATION_SECONDS: float = Field(default=8.0, gt=0.0)
+    STATIC_OBJECT_MIN_OBSERVATION_SECONDS: float = Field(default=300.0, gt=0.0)
     STATIC_OBJECT_MAX_DISPLACEMENT: float = Field(default=0.03, ge=0.0)
 
     CROSSING_EVENTS_ENABLED: bool = False
