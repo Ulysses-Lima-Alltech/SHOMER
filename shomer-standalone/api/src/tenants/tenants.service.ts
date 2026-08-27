@@ -121,7 +121,20 @@ export class TenantsService {
     if (!tenant) {
       throw new NotFoundException('Cliente não encontrado');
     }
-    tenant.lineCrossingByCamera = { ...(tenant.lineCrossingByCamera ?? {}), [cameraId]: dto };
+    const existing = tenant.lineCrossingByCamera ?? {};
+    // Só uma câmera acompanha entrada/saída por vez - ativar esta desliga
+    // qualquer outra que tenha ficado com enabled=true de uma configuração
+    // anterior, senão a tela de visualização (que escolhe "a primeira
+    // habilitada") fica presa na câmera antiga mesmo depois de trocar.
+    const updated: Record<string, CameraLineCrossing> = { ...existing, [cameraId]: dto };
+    if (dto.enabled) {
+      for (const otherId of Object.keys(updated)) {
+        if (otherId !== cameraId && updated[otherId]?.enabled) {
+          updated[otherId] = { ...updated[otherId], enabled: false };
+        }
+      }
+    }
+    tenant.lineCrossingByCamera = updated;
     await this.tenants.save(tenant);
     return dto;
   }
