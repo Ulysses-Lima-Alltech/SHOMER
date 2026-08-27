@@ -46,17 +46,10 @@ describe('StatsService', () => {
     expect(alto?.label).toBe('Alto');
   });
 
-  it('getOverview combina as métricas das quatro consultas (contagem atual, pico, direção, último evento)', async () => {
-    const occupancyRows = Array.from({ length: 8 }, (_, i) => ({
-      cameraId: 'camera-01',
-      trackId: String(i),
-      appearance: null,
-      ts: String(1000 + i),
-    }));
+  it('getOverview combina as métricas das três consultas (pico, direção, último evento) e deriva a ocupação atual de entradas - saídas', async () => {
     const queryRows = jest
       .fn()
       .mockResolvedValueOnce([{ today: '2026-08-09' }])
-      .mockResolvedValueOnce(occupancyRows)
       .mockResolvedValueOnce([{ peak: '9', peakHour: '14' }])
       .mockResolvedValueOnce([
         { direction: 'enter', c: '60' },
@@ -79,11 +72,28 @@ describe('StatsService', () => {
     });
   });
 
+  it('getOverview nunca deixa a ocupação atual negativa quando ha mais saidas que entradas', async () => {
+    const queryRows = jest
+      .fn()
+      .mockResolvedValueOnce([{ today: '2026-08-09' }])
+      .mockResolvedValueOnce([{ peak: '9', peakHour: '14' }])
+      .mockResolvedValueOnce([
+        { direction: 'enter', c: '5' },
+        { direction: 'exit', c: '7' },
+      ])
+      .mockResolvedValueOnce([{ lastEvent: '2026-08-09T14:32:10.000Z' }]);
+    const clickhouse = { queryRows } as unknown as ClickhouseService;
+    const service = new StatsService(clickhouse, config, tenants);
+
+    const overview = await service.getOverview('tenant-1');
+
+    expect(overview.currentOccupancy).toBe(0);
+  });
+
   it('getOverview retorna lastEventAt nulo quando não há nenhum evento ainda', async () => {
     const queryRows = jest
       .fn()
       .mockResolvedValueOnce([{ today: '2026-08-09' }])
-      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ peak: '0', peakHour: null }])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ lastEvent: '1970-01-01T00:00:00.000Z' }]);

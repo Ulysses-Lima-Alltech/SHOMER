@@ -255,66 +255,17 @@ export class StatsService {
    * objetivo aqui e so parar de contar manequins daqui pra frente.
    * countDistinctPeople funde detecções de câmeras diferentes que são a
    * mesma pessoa física (câmeras com campo de visão sobreposto). */
-  private async getCurrentOccupancy(tenantId: string): Promise<number> {
-    const rows = await this.clickhouse.queryRows<{
-      cameraId: string;
-      trackId: string;
-      appearance: string | null;
-      ts: string;
-    }>(
-      `SELECT
-         JSONExtractString(payload, 'cameraId') AS cameraId,
-         JSONExtractString(payload, 'trackId') AS trackId,
-         JSONExtractRaw(payload, 'appearance') AS appearance,
-         toUnixTimestamp64Milli(timestamp) AS ts
-       FROM events
-       WHERE tenant_id = {tenantId:String}
-         AND type = 'person.detected'
-         AND NOT JSONExtractBool(payload, 'isStatic')
-         AND timestamp >= now() - INTERVAL 5 SECOND
-         ${this.cameraScopeSql()}
-       ORDER BY timestamp DESC`,
-      { tenantId, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
-    );
-
-    // So a deteccao mais recente por (camera, track) - o ByteTrack ja e a
-    // fonte da verdade de identidade dentro da mesma camera; veio ordenado
-    // DESC, entao a primeira ocorrencia de cada chave ja e a mais recente.
-    const latestByTrack = new Map<string, DetectionSample>();
-    for (const row of rows) {
-      const key = `${row.cameraId}:${row.trackId}`;
-      if (latestByTrack.has(key)) continue;
-      let appearance: number[] | null = null;
-      if (row.appearance) {
-        try {
-          appearance = JSON.parse(row.appearance) as number[];
-        } catch {
-          appearance = null;
-        }
-      }
-      latestByTrack.set(key, {
-        cameraId: row.cameraId,
-        trackId: row.trackId,
-        appearance,
-        timestampMs: Number(row.ts),
-      });
-    }
-
-    return countDistinctPeople([...latestByTrack.values()]);
-  }
-
   async getOverview(tenantId: string): Promise<OverviewStats> {
     const today = await this.getLocalToday();
     const tz = this.timezone;
 
-    const [currentOccupancy, peakRows, directionRows, lastEventRows] =
+    const [peakRows, directionRows, lastEventRows] =
       await Promise.all([
-        this.getCurrentOccupancy(tenantId),
         // Pico do dia = maior ocupação simultânea (saldo de entradas-saídas
         // ao longo do dia), não a hora com mais eventos "detected": raw
         // detection count multiplica pelo número de câmeras + troca de
         // track_id do tracker e chega a milhares para uma loja pequena de
-        // verdade (mesmo motivo do currentOccupancy/visitorsToday acima).
+        // verdade (mesmo motivo do visitorsToday acima).
         this.clickhouse.queryRows<{ peak: string; peakHour: string | null }>(
           `SELECT greatest(0, max(running)) AS peak,
                   toHour(argMax(ts, running), {tz:String}) AS peakHour
@@ -360,13 +311,20 @@ export class StatsService {
       directionRows.find((r) => r.direction === 'exit')?.c ?? 0,
     );
     const lastEvent = lastEventRows[0]?.lastEvent;
+    // Agora = entradas - saídas (quem cruzou a linha pra dentro e ainda não
+    // cruzou pra fora), não detecção ao vivo de uma câmera: a detecção só
+    // reflete quem está no campo de visão daquela câmera especificamente
+    // naquele instante, então alguém que entrou e está em outra parte da
+    // loja (fora do ângulo da câmera da linha) sumia do "Agora" mesmo
+    // continuando dentro. O saldo do livro-razão é o dado real.
+    const currentOccupancy = Math.max(0, entriesToday - exitsToday);
 
     return {
-      // visitorsToday = entradas hoje, não count(person.detected): o mesmo
-      // motivo do currentOccupancy acima — um visitante gera dezenas de
-      // eventos "detected" (um a cada poucos segundos enquanto está em
-      // quadro, multiplicado por troca de track_id), então contar esses
-      // eventos brutos não é "quantidade de visitantes".
+      // visitorsToday = entradas hoje, não count(person.detected): um
+      // visitante gera dezenas de eventos "detected" (um a cada poucos
+      // segundos enquanto está em quadro, multiplicado por troca de
+      // track_id), então contar esses eventos brutos não é "quantidade de
+      // visitantes".
       visitorsToday: entriesToday,
       currentOccupancy,
       peakToday: Number(peakRows[0]?.peak ?? 0),
