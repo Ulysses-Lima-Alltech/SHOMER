@@ -72,6 +72,9 @@ class VisionWorker:
             tolerance=settings.LINE_CROSSING_TOLERANCE,
             cooldown_seconds=settings.LINE_CROSSING_COOLDOWN_SECONDS,
             track_ttl_seconds=settings.LINE_CROSSING_TRACK_TTL_SECONDS,
+            crossing_confirm_seconds=getattr(
+                settings, "LINE_CROSSING_CONFIRM_SECONDS", 0.6
+            ),
             static_filter_enabled=getattr(
                 settings, "STATIC_OBJECT_FILTER_ENABLED", True
             ),

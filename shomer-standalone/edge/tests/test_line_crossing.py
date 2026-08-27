@@ -17,6 +17,7 @@ from src.analytics.line_crossing import (
     LineCrossingAnalyzer,
     NormalizedPoint,
     Side,
+    body_center,
     bottom_center,
 )
 from src.config import Settings
@@ -47,6 +48,7 @@ def analyzer(
     tolerance: float = 0.02,
     cooldown: float = 1.0,
     ttl: float = 10.0,
+    confirm_seconds: float = 0.0,
     static_filter_enabled: bool = True,
     static_min_observation_seconds: float = 8.0,
     static_max_displacement: float = 0.03,
@@ -61,6 +63,7 @@ def analyzer(
         tolerance=tolerance,
         cooldown_seconds=cooldown,
         track_ttl_seconds=ttl,
+        crossing_confirm_seconds=confirm_seconds,
         static_filter_enabled=static_filter_enabled,
         static_min_observation_seconds=static_min_observation_seconds,
         static_max_displacement=static_max_displacement,
@@ -76,6 +79,37 @@ def process_one(
     seconds: float,
 ):
     return subject.process([person(track_id, x, y, seconds)], FRAME_WIDTH, FRAME_HEIGHT)
+
+
+def person_with_bbox(
+    track_id: int,
+    y1: float,
+    y2: float,
+    seconds: float,
+    x1: float = 45,
+    x2: float = 55,
+) -> TrackedPerson:
+    """Builds a person with independently-set top/bottom edges, so bottom_center
+    (feet) and body_center (torso) can land on different sides of the line -
+    unlike person()/process_one(), which move a fixed-size box as a rigid unit."""
+    return TrackedPerson(
+        track_id=track_id,
+        bbox=BoundingBox(x1, y1, x2, y2),
+        confidence=0.9,
+        timestamp=BASE_TIME + timedelta(seconds=seconds),
+    )
+
+
+def process_one_bbox(
+    subject: LineCrossingAnalyzer,
+    track_id: int,
+    y1: float,
+    y2: float,
+    seconds: float,
+):
+    return subject.process(
+        [person_with_bbox(track_id, y1, y2, seconds)], FRAME_WIDTH, FRAME_HEIGHT
+    )
 
 
 class LineCrossingTests(unittest.TestCase):
@@ -405,6 +439,50 @@ class LineCrossingTests(unittest.TestCase):
 
         self.assertEqual(point.x, 0.05)
         self.assertEqual(point.y, 1.2)
+
+    def test_body_center_is_bbox_midpoint(self):
+        subject = person_with_bbox(10, 30, 55, 0)
+        point = body_center(subject, FRAME_WIDTH, FRAME_HEIGHT)
+
+        self.assertAlmostEqual(point.x, 0.5)
+        self.assertAlmostEqual(point.y, 0.425)
+
+    def test_foot_poking_past_line_without_torso_never_counts(self):
+        # Mimics someone sitting near the line with a leg stretched past it:
+        # feet (bottom_center) cross, but the torso (body_center) never does,
+        # even after a long stretch of frames - must never count as a crossing.
+        subject = analyzer(confirm_seconds=0.5, static_filter_enabled=False)
+
+        process_one_bbox(subject, 10, 5, 15, 0)  # fully on SIDE_B at first
+        for seconds in (1, 3, 6, 10, 20):
+            events = process_one_bbox(subject, 10, 30, 55, seconds)
+            self.assertEqual(events, [])
+
+        self.assertEqual(subject.stats().entries, 0)
+        self.assertEqual(subject.stats().exits, 0)
+
+    def test_confirm_seconds_delays_crossing_until_side_is_sustained(self):
+        subject = analyzer(confirm_seconds=0.5)
+
+        process_one(subject, 10, 50, 80, 0)
+        immediate = process_one(subject, 10, 50, 20, 1.0)
+        self.assertEqual(immediate, [])
+
+        confirmed = process_one(subject, 10, 50, 20, 1.6)
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(confirmed[0].direction, CrossingDirection.ENTER)
+        self.assertEqual(subject.stats().entries, 1)
+
+    def test_confirm_seconds_cancels_if_side_returns_before_elapsed(self):
+        subject = analyzer(confirm_seconds=0.5)
+
+        process_one(subject, 10, 50, 80, 0)
+        process_one(subject, 10, 50, 20, 1.0)  # candidate crossing starts
+        process_one(subject, 10, 50, 80, 1.2)  # back before 0.5s - cancels it
+        events = process_one(subject, 10, 50, 20, 1.3)  # new candidate, not yet confirmed
+
+        self.assertEqual(events, [])
+        self.assertEqual(subject.stats().entries, 0)
 
     def test_static_object_never_counts_line_crossing(self):
         # Mimics a mannequin: sits still near the line, then a small bbox

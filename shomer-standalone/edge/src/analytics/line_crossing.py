@@ -50,6 +50,11 @@ class TrackCrossingState:
     last_point: "NormalizedPoint"
     max_displacement: float = 0.0
     last_crossing_at: datetime | None = None
+    # Candidate side change awaiting confirmation (see crossing_confirm_seconds) -
+    # a foot/limb that pokes past the line for a single frame and pulls back
+    # (someone sitting or leaning near the line) must not count as a crossing.
+    pending_side: Side | None = None
+    pending_since: datetime | None = None
 
 
 @dataclass
@@ -91,6 +96,7 @@ class LineCrossingAnalyzer:
         tolerance: float,
         cooldown_seconds: float,
         track_ttl_seconds: float,
+        crossing_confirm_seconds: float = 0.6,
         static_filter_enabled: bool = True,
         static_min_observation_seconds: float = 8.0,
         static_max_displacement: float = 0.03,
@@ -104,6 +110,7 @@ class LineCrossingAnalyzer:
         self.tolerance = tolerance
         self.cooldown_seconds = cooldown_seconds
         self.track_ttl_seconds = track_ttl_seconds
+        self.crossing_confirm_seconds = crossing_confirm_seconds
         self.static_filter_enabled = static_filter_enabled
         self.static_min_observation_seconds = static_min_observation_seconds
         self.static_max_displacement = static_max_displacement
@@ -191,10 +198,35 @@ class LineCrossingAnalyzer:
                 state.last_stable_side = current_side
                 continue
             if current_side is state.last_stable_side:
+                # Back on the stable side - cancels any pending crossing, so a
+                # limb that dips past the line and pulls back never confirms.
+                state.pending_side = None
+                state.pending_since = None
                 continue
+
+            # Feet alone are not enough: someone sitting or leaning near the
+            # line can hold a leg past it indefinitely without ever actually
+            # leaving. Require the torso (bbox center) to also be on the new
+            # side - a person genuinely walking through has feet and torso
+            # cross together, a seated person's torso never moves.
+            body_side = self.side_for_point(body_center(person, frame_width, frame_height))
+            if body_side is not current_side:
+                state.pending_side = None
+                state.pending_since = None
+                continue
+
+            if self.crossing_confirm_seconds > 0:
+                if state.pending_side is not current_side:
+                    state.pending_side = current_side
+                    state.pending_since = now
+                    continue
+                if (now - state.pending_since).total_seconds() < self.crossing_confirm_seconds:
+                    continue
 
             event = self._crossing_event(person.track_id, state, current_side, now)
             state.last_stable_side = current_side
+            state.pending_side = None
+            state.pending_since = None
             if event is not None:
                 events.append(event)
 
@@ -359,4 +391,23 @@ def bottom_center(
     return NormalizedPoint(
         x=((person.bbox.x1 + person.bbox.x2) / 2.0) / frame_width,
         y=person.bbox.y2 / frame_height,
+    )
+
+
+def body_center(
+    person: TrackedPerson, frame_width: int, frame_height: int
+) -> NormalizedPoint:
+    """Return the normalized bbox center, approximating the torso.
+
+    Used alongside bottom_center (feet) to require the whole body to cross
+    the line, not just a foot/leg: someone sitting or leaning near the line
+    can stretch a leg past it for a long time without ever actually leaving,
+    and their torso position is what tells them apart from someone walking
+    through - a walking person's feet and torso cross together.
+    """
+    if frame_width <= 0 or frame_height <= 0:
+        raise ValueError("frame dimensions must be positive")
+    return NormalizedPoint(
+        x=((person.bbox.x1 + person.bbox.x2) / 2.0) / frame_width,
+        y=((person.bbox.y1 + person.bbox.y2) / 2.0) / frame_height,
     )

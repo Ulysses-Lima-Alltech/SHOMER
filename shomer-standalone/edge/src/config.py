@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     LINE_CROSSING_ENTER_DIRECTION: str = "A_TO_B"
     LINE_CROSSING_TOLERANCE: float = Field(default=0.02, ge=0.0, le=0.25)
     LINE_CROSSING_COOLDOWN_SECONDS: float = Field(default=1.0, ge=0.0)
+    # Um lado so passa a valer como "cruzou" depois de ficar nesse lado por
+    # esse tempo continuo - um pe/perna esticada que passa da linha por um
+    # frame e volta (alguem sentado ou apoiado perto da linha) nao confirma.
+    LINE_CROSSING_CONFIRM_SECONDS: float = Field(default=0.6, ge=0.0)
     # ByteTrack (bytetrack.yaml) keeps a lost track alive for track_buffer=30
     # frames before dropping it and assigning a new track_id on reappearance
     # (~6s of real time at the default VISION_FPS=5). Keep this comfortably
