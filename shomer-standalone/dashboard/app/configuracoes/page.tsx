@@ -9,6 +9,7 @@ import {
   createDevice,
   deleteDevice,
   EdgeHealthStatus,
+  getAllLineCrossings,
   getCameras,
   getDevices,
   getEdgeHealth,
@@ -759,7 +760,12 @@ function entryArrow(
 }
 
 function LinhaEntradaSection({ tenantId }: { tenantId: string }) {
+  const [mode, setMode] = useState<"view" | "edit">("view");
   const [cameras, setCameras] = useState<CameraOption[] | null>(null);
+  const [allLines, setAllLines] = useState<Record<string, CameraLineCrossing> | null>(null);
+  const [loadingAll, setLoadingAll] = useState(true);
+  const [loadAllError, setLoadAllError] = useState<string | null>(null);
+
   const [cameraId, setCameraId] = useState<string | undefined>(undefined);
   const [snapshotUrl, setSnapshotUrl] = useState<string | null>(null);
   const [snapshotFailed, setSnapshotFailed] = useState(false);
@@ -774,14 +780,36 @@ function LinhaEntradaSection({ tenantId }: { tenantId: string }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const currentBlobUrlRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    getCameras()
-      .then((result) => {
-        setCameras(result);
-        if (result.length > 0) setCameraId((prev) => prev ?? result[0].id);
+  const loadOverview = useCallback(() => {
+    setLoadingAll(true);
+    setLoadAllError(null);
+    Promise.all([getCameras(), getAllLineCrossings(tenantId)])
+      .then(([cams, lines]) => {
+        setCameras(cams);
+        setAllLines(lines);
       })
-      .catch(() => setError("Não foi possível carregar a lista de câmeras."));
-  }, []);
+      .catch(() => setLoadAllError("Não foi possível carregar a configuração de linha."))
+      .finally(() => setLoadingAll(false));
+  }, [tenantId]);
+
+  useEffect(() => {
+    loadOverview();
+  }, [loadOverview]);
+
+  // Câmera atualmente responsável pela contagem de entrada/saída (a única
+  // com a linha marcada como ativa) - é essa que aparece no modo visualização.
+  const activeCameraId = allLines
+    ? Object.keys(allLines).find((id) => allLines[id]?.enabled)
+    : undefined;
+  const activeCamera = cameras?.find((c) => c.id === activeCameraId);
+  const activeLine = activeCameraId ? allLines?.[activeCameraId] ?? null : null;
+
+  function startEditing() {
+    setCameraId(activeCameraId ?? cameras?.[0]?.id);
+    setSaved(false);
+    setError(null);
+    setMode("edit");
+  }
 
   const applyLine = useCallback((line: CameraLineCrossing | null) => {
     setEnabled(line?.enabled ?? false);
@@ -791,27 +819,31 @@ function LinhaEntradaSection({ tenantId }: { tenantId: string }) {
   }, []);
 
   useEffect(() => {
-    if (!cameraId) return;
+    if (mode !== "edit" || !cameraId) return;
     setLoadingLine(true);
     setSaved(false);
     getLineCrossing(tenantId, cameraId)
       .then((line) => applyLine(line))
       .catch(() => setError("Não foi possível carregar a linha salva desta câmera."))
       .finally(() => setLoadingLine(false));
-  }, [tenantId, cameraId, applyLine]);
+  }, [mode, tenantId, cameraId, applyLine]);
+
+  // No modo visualização mostra o snapshot da câmera ativa (a que tem a
+  // linha ligada); no modo edição, da câmera selecionada no seletor.
+  const displayCameraId = mode === "edit" ? cameraId : activeCameraId;
 
   const refreshSnapshot = useCallback(async () => {
-    if (!cameraId) return;
+    if (!displayCameraId) return;
     setSnapshotFailed(false);
     try {
-      const blobUrl = await getSnapshotBlobUrl({ cameraId });
+      const blobUrl = await getSnapshotBlobUrl({ cameraId: displayCameraId });
       if (currentBlobUrlRef.current) URL.revokeObjectURL(currentBlobUrlRef.current);
       currentBlobUrlRef.current = blobUrl;
       setSnapshotUrl(blobUrl);
     } catch {
       setSnapshotFailed(true);
     }
-  }, [cameraId]);
+  }, [displayCameraId]);
 
   useEffect(() => {
     refreshSnapshot();
@@ -859,6 +891,8 @@ function LinhaEntradaSection({ tenantId }: { tenantId: string }) {
     try {
       await setLineCrossing(tenantId, cameraId, { enabled, pointA, pointB, enterDirection });
       setSaved(true);
+      setMode("view");
+      loadOverview();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Falha ao salvar a linha.");
     } finally {
@@ -867,6 +901,96 @@ function LinhaEntradaSection({ tenantId }: { tenantId: string }) {
   }
 
   const arrow = pointA && pointB ? entryArrow(pointA, pointB, enterDirection) : null;
+  const viewArrow = activeLine ? entryArrow(activeLine.pointA, activeLine.pointB, activeLine.enterDirection) : null;
+
+  if (loadingAll) {
+    return (
+      <section className="panel flow-panel" style={{ marginBottom: 18 }}>
+        <div className="panel-header">
+          <div>
+            <span className="panel-kicker">LINHA DE ENTRADA/SAÍDA</span>
+            <h2>Marque a porta da loja numa câmera</h2>
+          </div>
+        </div>
+        <div className="empty-state" style={{ marginTop: 16 }}>
+          <AlertIcon style={{ width: 28, height: 28, color: "var(--text-faint)" }} />
+          <strong>Carregando...</strong>
+        </div>
+      </section>
+    );
+  }
+
+  if (mode === "view") {
+    return (
+      <section className="panel flow-panel" style={{ marginBottom: 18 }}>
+        <div className="panel-header">
+          <div>
+            <span className="panel-kicker">LINHA DE ENTRADA/SAÍDA</span>
+            <h2>{activeCamera ? `Contando pela câmera "${activeCamera.label}"` : "Nenhuma câmera configurada"}</h2>
+            <p style={{ color: "var(--text-soft)", fontSize: 13, marginTop: 4 }}>
+              {activeCamera
+                ? "É essa câmera que alimenta Visitantes hoje, Agora e Saídas hoje no painel. As demais câmeras servem só o mapa de calor."
+                : "Escolha uma câmera e trace a linha da porta pra começar a contar entradas e saídas."}
+            </p>
+          </div>
+          <button type="button" className="export-button" onClick={startEditing}>
+            Editar
+          </button>
+        </div>
+
+        {loadAllError && <div className="login-error" style={{ marginTop: 12 }}>{loadAllError}</div>}
+
+        {activeCamera && activeLine ? (
+          <div className="heatmap-stage" style={{ marginTop: 16 }}>
+            {snapshotUrl && !snapshotFailed ? (
+              // eslint-disable-next-line @next/next/no-img-element -- snapshot vem via blob URL, não é asset do Next
+              <img src={snapshotUrl} alt={`Imagem da câmera ${activeCamera.label}`} className="heatmap-snapshot" />
+            ) : (
+              <div className="empty-state">
+                <AlertIcon style={{ width: 28, height: 28, color: "var(--text-faint)" }} />
+                <strong>Imagem da câmera indisponível</strong>
+                <span>Confirme que o dispositivo edge dessa câmera está online.</span>
+              </div>
+            )}
+            <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="store-layout-svg">
+              <defs>
+                <marker id="entry-arrow-head-view" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                  <path d="M0,0 L6,3 L0,6 Z" fill="#22c55e" />
+                </marker>
+              </defs>
+              <line
+                x1={activeLine.pointA.x * 100}
+                y1={activeLine.pointA.y * 100}
+                x2={activeLine.pointB.x * 100}
+                y2={activeLine.pointB.y * 100}
+                stroke="#ef4444"
+                strokeWidth={0.8}
+                vectorEffect="non-scaling-stroke"
+              />
+              {viewArrow && (
+                <line
+                  x1={viewArrow.x1}
+                  y1={viewArrow.y1}
+                  x2={viewArrow.x2}
+                  y2={viewArrow.y2}
+                  stroke="#22c55e"
+                  strokeWidth={0.8}
+                  vectorEffect="non-scaling-stroke"
+                  markerEnd="url(#entry-arrow-head-view)"
+                />
+              )}
+            </svg>
+          </div>
+        ) : (
+          <div className="empty-state" style={{ marginTop: 16 }}>
+            <AlertIcon style={{ width: 28, height: 28, color: "var(--text-faint)" }} />
+            <strong>Sem linha ativa</strong>
+            <span>Clique em "Editar" pra escolher a câmera da entrada e traçar a linha.</span>
+          </div>
+        )}
+      </section>
+    );
+  }
 
   return (
     <section className="panel flow-panel" style={{ marginBottom: 18 }}>
@@ -897,6 +1021,16 @@ function LinhaEntradaSection({ tenantId }: { tenantId: string }) {
           )}
           <button type="button" className="export-button" onClick={refreshSnapshot}>
             Atualizar imagem
+          </button>
+          <button
+            type="button"
+            className="nav-item"
+            onClick={() => {
+              setMode("view");
+              setError(null);
+            }}
+          >
+            Cancelar
           </button>
         </div>
       </div>
