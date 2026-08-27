@@ -13,12 +13,12 @@ import Shell from "../../components/Shell";
 import { PulseIcon } from "../../components/Icons";
 
 // ATENCAO antes de trocar isso de volta pra stream continuo (openDebugStream):
-// o stream MJPEG derrubou a conta gratuita do ngrok (ERR_NGROK_725, limite de
-// banda do mes) em poucos minutos de uso - o tunel ngrok e o UNICO caminho do
-// Vercel ate a API local, entao isso tirou o dashboard inteiro do ar, nao so
-// essa aba. Voltou pra snapshot em polling (bem mais leve) ate migrar o tunel
-// pra algo sem limite de banda (ex: Cloudflare Tunnel) ou pagar um plano
-// ngrok com mais banda.
+// o stream MJPEG ja derrubou a conta gratuita do ngrok (ERR_NGROK_725, limite
+// de banda do mes) em poucos minutos de uso - o tunel e o UNICO caminho do
+// Vercel ate a API local, entao isso tirava o dashboard inteiro do ar, nao so
+// essa aba. Migramos do ngrok pro Cloudflare Tunnel por causa disso, mas o
+// cuidado com banda continua valendo - ficou em snapshot em polling (bem
+// mais leve) em vez de stream continuo.
 const STATUS_REFRESH_INTERVAL_MS = 1_500;
 const SNAPSHOT_REFRESH_INTERVAL_MS = 3_000;
 

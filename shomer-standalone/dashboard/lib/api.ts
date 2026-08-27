@@ -49,7 +49,6 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     ...options,
     headers: {
       "Content-Type": "application/json",
-      "ngrok-skip-browser-warning": "true",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers || {}),
     },
@@ -394,7 +393,6 @@ export function openDebugStream(
     try {
       const res = await fetch(`${API_URL}/stats/debug-stream${qs}`, {
         headers: {
-          "ngrok-skip-browser-warning": "true",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         signal: controller.signal,
@@ -468,7 +466,6 @@ export async function getSnapshotBlobUrl(
   const qs = query.toString();
   const res = await fetch(`${API_URL}/stats/snapshot${qs ? `?${qs}` : ""}`, {
     headers: {
-      "ngrok-skip-browser-warning": "true",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
   });
@@ -508,6 +505,44 @@ export function createDevice(data: {
 
 export function deleteDevice(id: number): Promise<void> {
   return request<void>(`/devices/${id}`, { method: "DELETE" });
+}
+
+export interface LineCrossingPoint {
+  x: number;
+  y: number;
+}
+
+export interface CameraLineCrossing {
+  enabled: boolean;
+  pointA: LineCrossingPoint;
+  pointB: LineCrossingPoint;
+  enterDirection: "A_TO_B" | "B_TO_A";
+}
+
+export function getAllLineCrossings(tenantId: string): Promise<Record<string, CameraLineCrossing>> {
+  return request<Record<string, CameraLineCrossing>>(
+    `/tenants/${encodeURIComponent(tenantId)}/line-crossing`,
+  );
+}
+
+export function getLineCrossing(
+  tenantId: string,
+  cameraId: string,
+): Promise<CameraLineCrossing | null> {
+  return request<CameraLineCrossing | null>(
+    `/tenants/${encodeURIComponent(tenantId)}/line-crossing/${encodeURIComponent(cameraId)}`,
+  );
+}
+
+export function setLineCrossing(
+  tenantId: string,
+  cameraId: string,
+  data: CameraLineCrossing,
+): Promise<CameraLineCrossing> {
+  return request<CameraLineCrossing>(
+    `/tenants/${encodeURIComponent(tenantId)}/line-crossing/${encodeURIComponent(cameraId)}`,
+    { method: "PATCH", body: JSON.stringify(data) },
+  );
 }
 
 export interface DayHours {
