@@ -1,10 +1,11 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
-import { OperatingHours, StoreBarrier, Tenant } from './entities/tenant.entity';
+import { CameraLineCrossing, OperatingHours, StoreBarrier, Tenant } from './entities/tenant.entity';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateOperatingHoursDto } from './dto/update-operating-hours.dto';
 import { UpdateStoreLayoutDto } from './dto/update-store-layout.dto';
+import { UpdateLineCrossingDto } from './dto/update-line-crossing.dto';
 
 export interface TenantWithUserCount extends Tenant {
   userCount: number;
@@ -93,5 +94,35 @@ export class TenantsService {
     tenant.storeLayout = dto.barriers;
     await this.tenants.save(tenant);
     return dto.barriers;
+  }
+
+  async getLineCrossing(id: string, cameraId: string): Promise<CameraLineCrossing | null> {
+    const tenant = await this.tenants.findOne({ where: { id } });
+    if (!tenant) {
+      throw new NotFoundException('Cliente não encontrado');
+    }
+    return tenant.lineCrossingByCamera?.[cameraId] ?? null;
+  }
+
+  async getAllLineCrossings(id: string): Promise<Record<string, CameraLineCrossing>> {
+    const tenant = await this.tenants.findOne({ where: { id } });
+    if (!tenant) {
+      throw new NotFoundException('Cliente não encontrado');
+    }
+    return tenant.lineCrossingByCamera ?? {};
+  }
+
+  async setLineCrossing(
+    id: string,
+    cameraId: string,
+    dto: UpdateLineCrossingDto,
+  ): Promise<CameraLineCrossing> {
+    const tenant = await this.tenants.findOne({ where: { id } });
+    if (!tenant) {
+      throw new NotFoundException('Cliente não encontrado');
+    }
+    tenant.lineCrossingByCamera = { ...(tenant.lineCrossingByCamera ?? {}), [cameraId]: dto };
+    await this.tenants.save(tenant);
+    return dto;
   }
 }

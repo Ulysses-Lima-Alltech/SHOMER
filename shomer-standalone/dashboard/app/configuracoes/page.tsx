@@ -4,17 +4,24 @@ import { FormEvent, MouseEvent as ReactMouseEvent, Suspense, useCallback, useEff
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ApiError,
+  CameraLineCrossing,
+  CameraOption,
   createDevice,
   deleteDevice,
   EdgeHealthStatus,
+  getCameras,
   getDevices,
   getEdgeHealth,
+  getLineCrossing,
   getOperatingHours,
+  getSnapshotBlobUrl,
   getStoreLayout,
   getStoredUser,
+  LineCrossingPoint,
   ManagedDevice,
   OperatingHours,
   SessionUser,
+  setLineCrossing,
   setOperatingHours,
   setStoreLayout,
   StoreBarrier,
@@ -725,6 +732,290 @@ function DesenharLojaSection({ tenantId }: { tenantId: string }) {
   );
 }
 
+const ARROW_LENGTH = 9; // no viewBox 0-100, comprimento da seta de sentido
+
+function entryArrow(
+  pointA: LineCrossingPoint,
+  pointB: LineCrossingPoint,
+  enterDirection: "A_TO_B" | "B_TO_A",
+): { x1: number; y1: number; x2: number; y2: number } | null {
+  const dx = pointB.x - pointA.x;
+  const dy = pointB.y - pointA.y;
+  const length = Math.hypot(dx, dy);
+  if (length === 0) return null;
+  // Normal apontando pro lado B (direita do vetor A->B); A_TO_B entra
+  // "rumo ao lado B", B_TO_A entra "rumo ao lado A" (ver
+  // edge/src/analytics/line_crossing.py side_for_point).
+  const towardSideB = { x: dy / length, y: -dx / length };
+  const normal = enterDirection === "A_TO_B" ? towardSideB : { x: -towardSideB.x, y: -towardSideB.y };
+  const midX = ((pointA.x + pointB.x) / 2) * 100;
+  const midY = ((pointA.y + pointB.y) / 2) * 100;
+  return {
+    x1: midX,
+    y1: midY,
+    x2: midX + normal.x * ARROW_LENGTH,
+    y2: midY + normal.y * ARROW_LENGTH,
+  };
+}
+
+function LinhaEntradaSection({ tenantId }: { tenantId: string }) {
+  const [cameras, setCameras] = useState<CameraOption[] | null>(null);
+  const [cameraId, setCameraId] = useState<string | undefined>(undefined);
+  const [snapshotUrl, setSnapshotUrl] = useState<string | null>(null);
+  const [snapshotFailed, setSnapshotFailed] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  const [pointA, setPointA] = useState<LineCrossingPoint | null>(null);
+  const [pointB, setPointB] = useState<LineCrossingPoint | null>(null);
+  const [enterDirection, setEnterDirection] = useState<"A_TO_B" | "B_TO_A">("A_TO_B");
+  const [loadingLine, setLoadingLine] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const currentBlobUrlRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    getCameras()
+      .then((result) => {
+        setCameras(result);
+        if (result.length > 0) setCameraId((prev) => prev ?? result[0].id);
+      })
+      .catch(() => setError("Não foi possível carregar a lista de câmeras."));
+  }, []);
+
+  const applyLine = useCallback((line: CameraLineCrossing | null) => {
+    setEnabled(line?.enabled ?? false);
+    setPointA(line?.pointA ?? null);
+    setPointB(line?.pointB ?? null);
+    setEnterDirection(line?.enterDirection ?? "A_TO_B");
+  }, []);
+
+  useEffect(() => {
+    if (!cameraId) return;
+    setLoadingLine(true);
+    setSaved(false);
+    getLineCrossing(tenantId, cameraId)
+      .then((line) => applyLine(line))
+      .catch(() => setError("Não foi possível carregar a linha salva desta câmera."))
+      .finally(() => setLoadingLine(false));
+  }, [tenantId, cameraId, applyLine]);
+
+  const refreshSnapshot = useCallback(async () => {
+    if (!cameraId) return;
+    setSnapshotFailed(false);
+    try {
+      const blobUrl = await getSnapshotBlobUrl({ cameraId });
+      if (currentBlobUrlRef.current) URL.revokeObjectURL(currentBlobUrlRef.current);
+      currentBlobUrlRef.current = blobUrl;
+      setSnapshotUrl(blobUrl);
+    } catch {
+      setSnapshotFailed(true);
+    }
+  }, [cameraId]);
+
+  useEffect(() => {
+    refreshSnapshot();
+  }, [refreshSnapshot]);
+
+  useEffect(() => {
+    return () => {
+      if (currentBlobUrlRef.current) URL.revokeObjectURL(currentBlobUrlRef.current);
+    };
+  }, []);
+
+  function handleStageClick(event: ReactMouseEvent<SVGSVGElement>) {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const point = {
+      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
+      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
+    };
+    setSaved(false);
+    if (!pointA) {
+      setPointA(point);
+      return;
+    }
+    if (!pointB) {
+      setPointB(point);
+      return;
+    }
+    // Já tinha uma linha completa - um novo clique começa a redesenhar.
+    setPointA(point);
+    setPointB(null);
+  }
+
+  function clearLine() {
+    setPointA(null);
+    setPointB(null);
+    setSaved(false);
+  }
+
+  async function handleSave() {
+    if (!cameraId || !pointA || !pointB) return;
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await setLineCrossing(tenantId, cameraId, { enabled, pointA, pointB, enterDirection });
+      setSaved(true);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Falha ao salvar a linha.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const arrow = pointA && pointB ? entryArrow(pointA, pointB, enterDirection) : null;
+
+  return (
+    <section className="panel flow-panel" style={{ marginBottom: 18 }}>
+      <div className="panel-header">
+        <div>
+          <span className="panel-kicker">LINHA DE ENTRADA/SAÍDA</span>
+          <h2>Marque a porta da loja numa câmera</h2>
+          <p style={{ color: "var(--text-soft)", fontSize: 13, marginTop: 4 }}>
+            Escolha a câmera que enquadra a entrada e clique duas vezes na imagem pra traçar a
+            linha — cruzar de um lado pro outro conta como entrada ou saída. As demais câmeras
+            continuam servindo só o mapa de calor. A linha salva vale a partir do próximo
+            reinício do processo daquela câmera, não em tempo real.
+          </p>
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {cameras && cameras.length > 0 && (
+            <select
+              value={cameraId}
+              onChange={(e) => setCameraId(e.target.value)}
+              style={{ padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8 }}
+            >
+              {cameras.map((cam) => (
+                <option key={cam.id} value={cam.id}>
+                  {cam.label}
+                </option>
+              ))}
+            </select>
+          )}
+          <button type="button" className="export-button" onClick={refreshSnapshot}>
+            Atualizar imagem
+          </button>
+        </div>
+      </div>
+
+      {!cameraId || (!snapshotUrl && !snapshotFailed) ? (
+        <div className="empty-state" style={{ marginTop: 16 }}>
+          <AlertIcon style={{ width: 28, height: 28, color: "var(--text-faint)" }} />
+          <strong>Carregando câmera...</strong>
+        </div>
+      ) : (
+        <>
+          <div className="heatmap-stage" style={{ marginTop: 16, cursor: "crosshair" }}>
+            {snapshotUrl && !snapshotFailed ? (
+              // eslint-disable-next-line @next/next/no-img-element -- snapshot vem via blob URL, não é asset do Next
+              <img src={snapshotUrl} alt="Imagem da câmera selecionada" className="heatmap-snapshot" />
+            ) : (
+              <div className="empty-state">
+                <AlertIcon style={{ width: 28, height: 28, color: "var(--text-faint)" }} />
+                <strong>Imagem da câmera indisponível</strong>
+                <span>Confirme que o dispositivo edge dessa câmera está online.</span>
+              </div>
+            )}
+            <svg
+              ref={svgRef}
+              viewBox="0 0 100 100"
+              preserveAspectRatio="none"
+              className="store-layout-svg"
+              onClick={handleStageClick}
+            >
+              <defs>
+                <marker id="entry-arrow-head" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
+                  <path d="M0,0 L6,3 L0,6 Z" fill="#22c55e" />
+                </marker>
+              </defs>
+              {pointA && pointB && (
+                <line
+                  x1={pointA.x * 100}
+                  y1={pointA.y * 100}
+                  x2={pointB.x * 100}
+                  y2={pointB.y * 100}
+                  stroke="#ef4444"
+                  strokeWidth={0.8}
+                  vectorEffect="non-scaling-stroke"
+                />
+              )}
+              {arrow && (
+                <line
+                  x1={arrow.x1}
+                  y1={arrow.y1}
+                  x2={arrow.x2}
+                  y2={arrow.y2}
+                  stroke="#22c55e"
+                  strokeWidth={0.8}
+                  vectorEffect="non-scaling-stroke"
+                  markerEnd="url(#entry-arrow-head)"
+                />
+              )}
+              {pointA && (
+                <circle cx={pointA.x * 100} cy={pointA.y * 100} r={1.1} fill="#ffffff" stroke="#111" strokeWidth={0.3} />
+              )}
+              {pointB && (
+                <circle cx={pointB.x * 100} cy={pointB.y * 100} r={1.1} fill="#ffffff" stroke="#111" strokeWidth={0.3} />
+              )}
+            </svg>
+          </div>
+
+          <div style={{ display: "flex", gap: 16, marginTop: 12, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 12, color: "var(--text-faint)" }}>
+              {!pointA
+                ? "Clique na imagem pra marcar o primeiro ponto da linha."
+                : !pointB
+                  ? "Clique de novo pra marcar o segundo ponto."
+                  : "Linha traçada — a seta verde mostra o sentido considerado entrada."}
+            </span>
+            <button type="button" className="nav-item" onClick={clearLine} disabled={!pointA}>
+              Refazer linha
+            </button>
+            <button
+              type="button"
+              className="nav-item"
+              onClick={() => {
+                setEnterDirection((prev) => (prev === "A_TO_B" ? "B_TO_A" : "A_TO_B"));
+                setSaved(false);
+              }}
+              disabled={!pointA || !pointB}
+            >
+              Inverter sentido de entrada
+            </button>
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={enabled}
+                onChange={(e) => {
+                  setEnabled(e.target.checked);
+                  setSaved(false);
+                }}
+              />
+              Ativar contagem nesta câmera
+            </label>
+          </div>
+        </>
+      )}
+
+      {error && <div className="login-error" style={{ marginTop: 12 }}>{error}</div>}
+      {saved && !error && <div style={{ marginTop: 12, color: "var(--accent)", fontSize: 13 }}>Linha salva.</div>}
+
+      <button
+        type="button"
+        className="export-button"
+        style={{ marginTop: 16 }}
+        onClick={handleSave}
+        disabled={saving || loadingLine || !pointA || !pointB}
+      >
+        {saving ? "Salvando..." : "Salvar linha"}
+      </button>
+    </section>
+  );
+}
+
 function ConfiguracoesPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -764,6 +1055,7 @@ function ConfiguracoesPageInner() {
       {tenantId ? (
         <>
           <CamerasSection session={session} tenantId={tenantId} />
+          <LinhaEntradaSection tenantId={tenantId} />
           <DesenharLojaSection tenantId={tenantId} />
           <HorarioSection session={session} tenantId={tenantId} />
         </>

@@ -1,11 +1,13 @@
 import logging
+import math
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from src.config import settings
+from src.analytics.line_crossing import MIN_LINE_LENGTH
+from src.config import Settings, settings
 from src.events.factory import (
     CrossingEventFactory,
     DetectionEventFactory,
@@ -19,6 +21,7 @@ from src.health import router as health_router
 from src.mock.worker import MockWorker
 from src.schedule.business_hours import BusinessHoursGate
 from src.schedule.poller import BusinessHoursPoller
+from src.schedule.remote_line_crossing import fetch_line_crossing_override
 from src.vision.status import router as vision_router
 from src.vision.worker import VisionWorker
 
@@ -27,6 +30,41 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+async def _apply_remote_line_crossing(settings: Settings) -> None:
+    """Overrides the .env LINE_CROSSING_* defaults with the line the client
+    drew for this camera in the dashboard, if any (see
+    remote_line_crossing.fetch_line_crossing_override). Mutating `settings`
+    in place is safe here: it only happens once, before VisionWorker (and
+    the LineCrossingAnalyzer it builds) reads these fields."""
+    line = await fetch_line_crossing_override(
+        settings.API_URL, settings.TENANT_ID, settings.CAMERA_ID
+    )
+    if line is None:
+        return
+    try:
+        point_a = line["pointA"]
+        point_b = line["pointB"]
+        x1, y1, x2, y2 = float(point_a["x"]), float(point_a["y"]), float(point_b["x"]), float(point_b["y"])
+        enter_direction = line["enterDirection"]
+        if enter_direction not in {"A_TO_B", "B_TO_A"}:
+            raise ValueError(f"invalid enterDirection: {enter_direction!r}")
+        if math.hypot(x2 - x1, y2 - y1) < MIN_LINE_LENGTH:
+            raise ValueError("line points A and B are too close together")
+    except (KeyError, TypeError, ValueError):
+        logger.warning("Ignoring malformed line-crossing config from API: %r", line, exc_info=True)
+        return
+
+    settings.LINE_CROSSING_ENABLED = True
+    settings.LINE_CROSSING_X1 = x1
+    settings.LINE_CROSSING_Y1 = y1
+    settings.LINE_CROSSING_X2 = x2
+    settings.LINE_CROSSING_Y2 = y2
+    settings.LINE_CROSSING_ENTER_DIRECTION = enter_direction
+    logger.info(
+        "Using line-crossing config from dashboard for camera_id=%s", settings.CAMERA_ID
+    )
+
 
 mock_worker: MockWorker | None = None
 vision_worker: VisionWorker | None = None
@@ -118,6 +156,9 @@ async def lifespan(app: FastAPI):
             business_hours_gate = None
             if settings.BUSINESS_HOURS_CHECK_ENABLED:
                 business_hours_gate = BusinessHoursGate()
+
+            if settings.TENANT_ID and settings.CAMERA_ID:
+                await _apply_remote_line_crossing(settings)
 
             vision_worker = VisionWorker(
                 settings,

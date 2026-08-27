@@ -26,6 +26,7 @@ import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantStatusDto } from './dto/update-tenant-status.dto';
 import { UpdateOperatingHoursDto } from './dto/update-operating-hours.dto';
 import { UpdateStoreLayoutDto } from './dto/update-store-layout.dto';
+import { UpdateLineCrossingDto } from './dto/update-line-crossing.dto';
 
 interface AuthenticatedRequest extends Request {
   user: { role: UserRole; tenantId: string | null };
@@ -114,6 +115,42 @@ export class TenantsController {
       throw new ForbiddenException('Sem permissão para editar outro cliente');
     }
     return this.tenants.setStoreLayout(id, dto);
+  }
+
+  @Get(':id/line-crossing')
+  @Roles('super_admin', 'tenant_admin', 'viewer')
+  async getAllLineCrossings(@Req() req: AuthenticatedRequest, @Param('id') id: string) {
+    if (req.user.role !== 'super_admin' && req.user.tenantId !== id) {
+      throw new ForbiddenException('Sem permissão para ver outro cliente');
+    }
+    return this.tenants.getAllLineCrossings(id);
+  }
+
+  @Get(':id/line-crossing/:cameraId')
+  @Roles('super_admin', 'tenant_admin', 'viewer')
+  async getLineCrossing(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('cameraId') cameraId: string,
+  ) {
+    if (req.user.role !== 'super_admin' && req.user.tenantId !== id) {
+      throw new ForbiddenException('Sem permissão para ver outro cliente');
+    }
+    return this.tenants.getLineCrossing(id, cameraId);
+  }
+
+  @Patch(':id/line-crossing/:cameraId')
+  @Roles('super_admin', 'tenant_admin', 'viewer')
+  async updateLineCrossing(
+    @Req() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Param('cameraId') cameraId: string,
+    @Body() dto: UpdateLineCrossingDto,
+  ) {
+    if (req.user.role !== 'super_admin' && req.user.tenantId !== id) {
+      throw new ForbiddenException('Sem permissão para editar outro cliente');
+    }
+    return this.tenants.setLineCrossing(id, cameraId, dto);
   }
 
   @Delete(':id')

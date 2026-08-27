@@ -30,6 +30,18 @@ export class Tenant {
   @Column({ name: 'store_layout', type: 'jsonb', nullable: true })
   storeLayout: StoreBarrier[] | null;
 
+  // Linha de entrada/saída desenhada pelo cliente sobre o snapshot de uma
+  // câmera (ver configuracoes -> "Linha de entrada/saída"), uma por
+  // cameraId - normalmente só uma câmera da loja enquadra a porta, as
+  // demais ficam de fora deste mapa e continuam servindo só o mapa de
+  // calor. Cada processo de edge busca a entrada correspondente ao seu
+  // próprio CAMERA_ID num endpoint público (ver
+  // public-line-crossing.controller.ts) uma única vez, na inicialização -
+  // uma linha salva aqui só passa a valer no próximo restart daquele
+  // processo, não em tempo real.
+  @Column({ name: 'line_crossing', type: 'jsonb', nullable: true })
+  lineCrossingByCamera: Record<string, CameraLineCrossing> | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }
@@ -61,4 +73,18 @@ export interface StoreBarrier {
   id: string;
   label: string; // ex: "Balcão", "Prateleira 3"
   points: StoreLayoutPoint[]; // polígono, mínimo 3 pontos
+}
+
+export interface LineCrossingPoint {
+  x: number; // 0..1, normalizado pela largura/altura do snapshot da câmera
+  y: number; // 0..1
+}
+
+export interface CameraLineCrossing {
+  enabled: boolean;
+  pointA: LineCrossingPoint;
+  pointB: LineCrossingPoint;
+  // Lado A->B conta como ENTER; B->A como EXIT (mesma convenção do edge,
+  // ver edge/src/analytics/line_crossing.py EnterDirection).
+  enterDirection: 'A_TO_B' | 'B_TO_A';
 }
