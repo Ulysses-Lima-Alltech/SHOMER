@@ -870,6 +870,10 @@ function LinhaEntradaSection({ tenantId }: { tenantId: string }) {
     }
     if (!pointB) {
       setPointB(point);
+      // Terminou de desenhar uma linha nova - ativa por padrão, senão é
+      // fácil desenhar, clicar em "Salvar" e continuar sem contar nada
+      // porque o checkbox ficou desmarcado de uma câmera anterior.
+      setEnabled(true);
       return;
     }
     // Já tinha uma linha completa - um novo clique começa a redesenhar.
