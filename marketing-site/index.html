@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Shomer transforma as câmeras que sua loja já tem em leitura de fluxo, mapa de calor e validação ao vivo, em tempo real.">
+<meta name="description" content="Shomer transforma as câmeras que sua loja já tem em leitura de fluxo, mapa de calor e relatórios, em tempo real.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Shomer">
 <meta property="og:title" content="Shomer — visão computacional para varejo">
@@ -270,12 +270,6 @@
   .panel-section{background:var(--surface-2);}
   .deepdive{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center;}
   @media (max-width:940px){.deepdive{grid-template-columns:1fr;}}
-  .deepdive.reverse .dd-copy{order:2;}
-  .deepdive.reverse .dd-visual{order:1;}
-  @media (max-width:940px){
-    .deepdive.reverse .dd-copy{order:1;}
-    .deepdive.reverse .dd-visual{order:2;}
-  }
   .dd-copy h2{margin-bottom:14px;}
   .dd-copy p{font-size:15.5px;color:var(--ink-muted);margin:0 0 22px;max-width:52ch;}
   .dd-stats{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:8px;}
@@ -297,22 +291,6 @@
   .heat-stage svg{width:100%;height:100%;display:block;}
   .heat-legend{display:flex;align-items:center;gap:8px;padding:12px 18px;font-size:11.5px;color:var(--ink-faint);font-family:"JetBrains Mono",monospace;}
   .heat-legend .bar{width:120px;height:6px;border-radius:3px;background:linear-gradient(90deg,var(--heat-cold),var(--heat-mid),var(--heat-hot));}
-
-  /* live validation illustration */
-  .cam-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow);}
-  .cam-tabs{display:flex;gap:6px;padding:14px 18px 0;}
-  .cam-tab{
-    font-family:"JetBrains Mono",monospace;font-size:11.5px;padding:6px 12px;border-radius:7px 7px 0 0;
-    background:var(--surface-2);color:var(--ink-faint);
-  }
-  .cam-tab.active{background:var(--ink);color:var(--bg);}
-  .cam-stage{position:relative;aspect-ratio:16/10;background:#15140f;margin:0 18px;border-radius:8px;overflow:hidden;}
-  .cam-stage svg{width:100%;height:100%;display:block;}
-  .cam-footer{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);margin-top:18px;border-top:1px solid var(--line);}
-  .cam-metric{background:var(--surface);padding:14px 16px;}
-  .cam-metric .v{font-family:"JetBrains Mono",monospace;font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;}
-  .cam-metric .l{font-size:10.5px;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.05em;margin-top:3px;}
-  .cam-pad{height:18px;}
 
   /* ---------- reports strip ---------- */
   .report-strip{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:40px;}
@@ -516,11 +494,6 @@
           <p>Onde o cliente circula e onde ele nunca vai — sobreposto à imagem real da própria câmera, não a um ícone genérico.</p>
         </div>
         <div class="feature">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>
-          <h3>Validação ao vivo</h3>
-          <p>A caixa de detecção de cada câmera, ao vivo. Você vê exatamente o que está sendo contado — e o que foi filtrado.</p>
-        </div>
-        <div class="feature">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
           <h3>Relatórios exportáveis</h3>
           <p>Janelas de 7, 14 ou 30 dias, padrão médio por horário e exportação completa em .xlsx.</p>
@@ -604,67 +577,6 @@
     </div>
   </section>
 
-  <!-- VALIDAÇÃO AO VIVO DEEP DIVE -->
-  <section id="validacao">
-    <div class="container">
-      <div class="deepdive reverse">
-        <div class="dd-copy reveal">
-          <div class="eyebrow">Transparência</div>
-          <h2>O que a câmera está vendo agora.</h2>
-          <p>Enquanto os concorrentes escondem a inteligência artificial atrás de um número pronto, o Shomer mostra a caixa de detecção de cada câmera, ao vivo, atualizada a cada 3 segundos — para você conferir exatamente o que está sendo contado, e o que foi filtrado como objeto parado.</p>
-          <div class="dd-stats">
-            <div class="dd-stat"><div class="v">41</div><div class="l">entradas registradas na câmera</div></div>
-            <div class="dd-stat"><div class="v">36</div><div class="l">saídas registradas na câmera</div></div>
-            <div class="dd-stat"><div class="v">80.730</div><div class="l">frames já processados</div></div>
-            <div class="dd-stat"><div class="v">3s</div><div class="l">intervalo de atualização</div></div>
-          </div>
-          <div class="dd-source">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M4 19V5M4 19h16M8 15l3-4 3 2 4-6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
-            dado real, câmera "Joias" — loja parceira
-          </div>
-        </div>
-        <div class="dd-visual reveal">
-          <div class="cam-card">
-            <div class="cam-tabs">
-              <span class="cam-tab active">Joias</span>
-              <span class="cam-tab">Caixa</span>
-              <span class="cam-tab">Roupas</span>
-              <span class="cam-tab">Roupas 2</span>
-            </div>
-            <div class="cam-stage">
-              <svg viewBox="0 0 400 250" preserveAspectRatio="xMidYMid slice">
-                <rect width="400" height="250" fill="#15140f"/>
-                <g stroke="#2b2a22" stroke-width="1">
-                  <rect x="30" y="30" width="110" height="70" fill="#1d1b16"/>
-                  <rect x="180" y="50" width="90" height="110" fill="#201e18"/>
-                  <rect x="300" y="40" width="75" height="130" fill="#1d1b16"/>
-                  <rect x="30" y="140" width="140" height="80" fill="#1a1914"/>
-                </g>
-                <g fill="none" stroke="var(--heat-cold)" stroke-width="2">
-                  <rect x="205" y="95" width="34" height="60" rx="2"/>
-                  <rect x="120" y="150" width="30" height="55" rx="2"/>
-                </g>
-                <text x="207" y="90" fill="var(--heat-cold)" font-family="JetBrains Mono, monospace" font-size="9">pessoa · 0.94</text>
-                <text x="122" y="145" fill="var(--heat-cold)" font-family="JetBrains Mono, monospace" font-size="9">pessoa · 0.88</text>
-                <g fill="none" stroke="var(--heat-hot)" stroke-width="1.6" stroke-dasharray="3 3">
-                  <rect x="300" y="60" width="26" height="40" rx="2"/>
-                </g>
-                <text x="302" y="55" fill="var(--heat-hot)" font-family="JetBrains Mono, monospace" font-size="9">filtrado</text>
-                <text x="14" y="238" fill="#8a8471" font-family="JetBrains Mono, monospace" font-size="10">26/08/2026 18:28:33</text>
-              </svg>
-            </div>
-            <div class="cam-pad"></div>
-            <div class="cam-footer">
-              <div class="cam-metric"><div class="v">sim</div><div class="l">modelo carregado</div></div>
-              <div class="cam-metric"><div class="v">0</div><div class="l">pessoas agora</div></div>
-              <div class="cam-metric"><div class="v">EXIT</div><div class="l">última direção</div></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
   <hr class="divider">
 
   <!-- RELATÓRIOS -->
@@ -700,8 +612,8 @@
           <div><h4>Sem reconhecimento facial</h4><p>O modelo detecta a presença e a posição de uma pessoa — não a identifica.</p></div>
         </div>
         <div class="privacy-item reveal">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3" stroke="currentColor" stroke-width="2"/></svg>
-          <div><h4>O dado é trajeto, não rosto</h4><p>Cada evento salva coordenada e horário de uma detecção — nunca uma imagem de rosto identificável.</p></div>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M3 3l18 18M10.6 10.6a2.5 2.5 0 003.5 3.5M9.4 5.5A10.4 10.4 0 0112 5c5 0 8.5 3.5 10 7-.6 1.4-1.6 2.9-2.9 4.1M6.5 6.9C4.7 8.1 3.2 9.9 2 12c1.5 3.5 5 7 10 7 1.1 0 2.1-.2 3.1-.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <div><h4>A operação não vê a câmera</h4><p>Gerente e equipe da loja acessam números, mapas e relatórios — nunca a imagem ao vivo da câmera.</p></div>
         </div>
         <div class="privacy-item reveal">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 21V9l8-5 8 5v12M4 21h16M9 21v-6h6v6" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
@@ -725,15 +637,15 @@
       <div class="faq-list reveal">
         <details class="faq-item">
           <summary>Preciso trocar de câmera para usar o Shomer?<span class="plus"></span></summary>
-          <p>Não. O Shomer lê o vídeo da câmera IP que a loja já tem, via RTSP. A tela de validação ao vivo deste site, por exemplo, roda numa câmera Intelbras comum — nenhum sensor proprietário é instalado.</p>
+          <p>Não. O Shomer lê o vídeo da câmera IP que a loja já tem, via RTSP. O mapa de calor deste site, por exemplo, foi gerado com uma câmera Intelbras comum — nenhum sensor proprietário é instalado.</p>
         </details>
         <details class="faq-item">
           <summary>O Shomer grava vídeo da minha loja?<span class="plus"></span></summary>
-          <p>A imagem da câmera é usada para o modelo detectar as pessoas e para a tela de validação ao vivo, onde você confere a caixa de detecção em tempo real. O que fica registrado nos relatórios e no log de eventos é contagem e posição — não uma gravação de vídeo para consulta posterior.</p>
+          <p>A imagem da câmera é processada pelo modelo para detectar e contar pessoas — ninguém da operação da loja acessa a câmera diretamente. O que chega ao painel, aos relatórios e ao log de eventos é contagem e posição, não uma gravação de vídeo para consulta posterior.</p>
         </details>
         <details class="faq-item">
           <summary>Funciona com mais de uma câmera e mais de uma loja?<span class="plus"></span></summary>
-          <p>Sim. O painel de validação ao vivo já roda com várias câmeras simultâneas numa loja parceira, e a área de administração dá acesso isolado por cliente — cada loja vê só o próprio painel.</p>
+          <p>Sim. Já roda com várias câmeras simultâneas numa loja parceira, e a área de administração dá acesso isolado por cliente — cada loja vê só o próprio painel.</p>
         </details>
         <details class="faq-item">
           <summary>O Shomer diferencia funcionário de cliente na contagem?<span class="plus"></span></summary>
