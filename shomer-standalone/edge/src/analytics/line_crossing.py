@@ -204,17 +204,6 @@ class LineCrossingAnalyzer:
                 state.pending_since = None
                 continue
 
-            # Feet alone are not enough: someone sitting or leaning near the
-            # line can hold a leg past it indefinitely without ever actually
-            # leaving. Require the torso (bbox center) to also be on the new
-            # side - a person genuinely walking through has feet and torso
-            # cross together, a seated person's torso never moves.
-            body_side = self.side_for_point(body_center(person, frame_width, frame_height))
-            if body_side is not current_side:
-                state.pending_side = None
-                state.pending_since = None
-                continue
-
             if self.crossing_confirm_seconds > 0:
                 if state.pending_side is not current_side:
                     state.pending_side = current_side
@@ -222,6 +211,25 @@ class LineCrossingAnalyzer:
                     continue
                 if (now - state.pending_since).total_seconds() < self.crossing_confirm_seconds:
                     continue
+
+            # Feet alone are not enough: someone sitting or leaning near the
+            # line can hold a leg past it indefinitely without ever actually
+            # leaving. Require the torso (bbox center) to also be on the new
+            # side before confirming - a person genuinely walking through has
+            # feet and torso cross together (torso may lag the feet by a
+            # frame or two while tracking catches up, which is why this is
+            # only checked once the confirm delay above has already elapsed,
+            # not on every frame from the first one); a seated person's torso
+            # never moves, so this keeps rejecting the crossing indefinitely.
+            body_side = self.side_for_point(body_center(person, frame_width, frame_height))
+            if body_side is not current_side:
+                logger.debug(
+                    "Line crossing candidate held: track_id=%s foot_side=%s body_side=%s",
+                    person.track_id,
+                    current_side.value,
+                    body_side.value,
+                )
+                continue
 
             event = self._crossing_event(person.track_id, state, current_side, now)
             state.last_stable_side = current_side
