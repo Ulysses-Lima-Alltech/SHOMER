@@ -160,7 +160,6 @@ class VisionFoundationTests(unittest.TestCase):
         from unittest.mock import patch
 
         worker = VisionWorker(FakeSettings())
-        worker.appearance_reid_enabled = False  # avoid loading the real reid model
         worker.detection_min_interval_seconds = 2.0
         calls = []
         worker.detection_event_sink = lambda *args: calls.append(args)
@@ -196,7 +195,6 @@ class VisionFoundationTests(unittest.TestCase):
         from unittest.mock import patch
 
         worker = VisionWorker(FakeSettings())
-        worker.appearance_reid_enabled = False
         worker.detection_min_interval_seconds = 2.0
         calls = []
         worker.detection_event_sink = lambda *args: calls.append(args)
@@ -373,82 +371,6 @@ class VisionFoundationTests(unittest.TestCase):
         payload = factory.create(person, frame_width=0, frame_height=0).to_dict()["payload"]
 
         self.assertNotIn("floorPoint", payload)
-
-    def test_detection_event_factory_defaults_is_static_false(self):
-        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
-        person = TrackedPerson(
-            track_id=3,
-            bbox=BoundingBox(100, 100, 200, 300),
-            confidence=0.9,
-            timestamp=timestamp,
-        )
-        factory = DetectionEventFactory(
-            EventDeviceContext(
-                tenant_id="tenant-1", store_id=None, camera_id="camera-1", edge_device_id="edge-1"
-            )
-        )
-
-        payload = factory.create(person, frame_width=1000, frame_height=1000).to_dict()["payload"]
-
-        self.assertEqual(payload["isStatic"], False)
-
-    def test_detection_event_factory_flags_static_track(self):
-        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
-        person = TrackedPerson(
-            track_id=3,
-            bbox=BoundingBox(100, 100, 200, 300),
-            confidence=0.9,
-            timestamp=timestamp,
-        )
-        factory = DetectionEventFactory(
-            EventDeviceContext(
-                tenant_id="tenant-1", store_id=None, camera_id="camera-1", edge_device_id="edge-1"
-            )
-        )
-
-        payload = factory.create(
-            person, frame_width=1000, frame_height=1000, is_static=True
-        ).to_dict()["payload"]
-
-        self.assertEqual(payload["isStatic"], True)
-
-    def test_detection_event_factory_includes_appearance_when_present(self):
-        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
-        person = TrackedPerson(
-            track_id=3,
-            bbox=BoundingBox(100, 100, 200, 300),
-            confidence=0.9,
-            timestamp=timestamp,
-        )
-        factory = DetectionEventFactory(
-            EventDeviceContext(
-                tenant_id="tenant-1", store_id=None, camera_id="camera-1", edge_device_id="edge-1"
-            )
-        )
-
-        payload = factory.create(
-            person, frame_width=1000, frame_height=1000, appearance=[0.1, 0.2, 0.3]
-        ).to_dict()["payload"]
-
-        self.assertEqual(payload["appearance"], [0.1, 0.2, 0.3])
-
-    def test_detection_event_factory_omits_appearance_when_absent(self):
-        timestamp = datetime(2026, 8, 7, tzinfo=timezone.utc)
-        person = TrackedPerson(
-            track_id=3,
-            bbox=BoundingBox(100, 100, 200, 300),
-            confidence=0.9,
-            timestamp=timestamp,
-        )
-        factory = DetectionEventFactory(
-            EventDeviceContext(
-                tenant_id="tenant-1", store_id=None, camera_id="camera-1", edge_device_id="edge-1"
-            )
-        )
-
-        payload = factory.create(person, frame_width=1000, frame_height=1000).to_dict()["payload"]
-
-        self.assertNotIn("appearance", payload)
 
     def test_edge_health_event_factory_reports_healthy(self):
         factory = EdgeHealthEventFactory(

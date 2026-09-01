@@ -53,8 +53,6 @@ class DetectionEventFactory:
         person: TrackedPerson,
         frame_width: int,
         frame_height: int,
-        is_static: bool = False,
-        appearance: list[float] | None = None,
     ) -> EdgeEventEnvelope:
         bbox = person.bbox
         payload: dict = {
@@ -69,17 +67,7 @@ class DetectionEventFactory:
             },
             "confidence": person.confidence,
             "isStaff": False,
-            # Manequim/objeto parado classificado como "person" pelo YOLO
-            # (ver LineCrossingAnalyzer.is_static) - consumidores que contam
-            # "pessoas" (ocupacao atual, mapa de calor) devem excluir.
-            "isStatic": is_static,
         }
-        if appearance is not None:
-            # Embedding de re-identificacao (OSNet, ver src/vision/reid.py) -
-            # usado pela API pra reconhecer a mesma pessoa fisica vista por
-            # duas cameras com campo de visao sobreposto no mesmo instante,
-            # evitando contar 2x em stats.getOverview.
-            payload["appearance"] = appearance
         if frame_width > 0 and frame_height > 0:
             # Ponto dos pes (centro-base do bbox), normalizado 0..1 pela
             # resolucao do frame. E o dado de entrada do mapa de calor: como

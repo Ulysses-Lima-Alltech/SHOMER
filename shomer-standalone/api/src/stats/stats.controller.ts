@@ -1,9 +1,9 @@
-import { Controller, ForbiddenException, Get, Query, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, ForbiddenException, Get, Post, Query, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { ApiBearerAuth, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { Request, Response } from 'express';
-import { Readable } from 'stream';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { CalibrateOccupancyDto } from './dto/calibrate-occupancy.dto';
 import { StatsService } from './stats.service';
 
 function parseDays(value: string | undefined): number {
@@ -63,6 +63,20 @@ export class StatsController {
   @ApiQuery({ name: 'tenantId', required: false })
   overview(@Req() req: AuthenticatedRequest, @Query('tenantId') tenantId?: string) {
     return this.stats.getOverview(this.resolveTenantId(req, tenantId));
+  }
+
+  /** Corrige "Agora" pra bater com a contagem real feita à mão na loja -
+   * ver StatsService.calibrateOccupancy pro motivo (saldo entradas-saídas
+   * zera a cada restart do tracking, mesmo com gente já dentro). */
+  @Post('occupancy-calibration')
+  @ApiQuery({ name: 'tenantId', required: false })
+  async calibrateOccupancy(
+    @Req() req: AuthenticatedRequest,
+    @Body() body: CalibrateOccupancyDto,
+    @Query('tenantId') tenantId?: string,
+  ) {
+    await this.stats.calibrateOccupancy(this.resolveTenantId(req, tenantId), body.count);
+    return { ok: true };
   }
 
   @Get('hourly')
@@ -196,25 +210,20 @@ export class StatsController {
   }
 
   /**
-   * Proxeia o snapshot ao vivo de uma câmera do edge (localhost, so
-   * acessivel desta maquina) pro navegador de quem esta logado no
-   * dashboard - o dashboard roda no Vercel, entao nao tem como o navegador
-   * do cliente chegar direto no edge. ?debug=true pede o snapshot com
-   * bounding boxes desenhadas (verde = contado, vermelho = filtrado como
-   * objeto estático) - usado na aba de validação ao vivo.
+   * Proxeia o snapshot ao vivo (imagem única, não stream) de uma câmera do
+   * edge (localhost, so acessivel desta maquina) pro navegador de quem esta
+   * logado no dashboard - o dashboard roda no Vercel, entao nao tem como o
+   * navegador do cliente chegar direto no edge. Usado só como imagem de
+   * fundo do mapa de calor e na tela de calibração da linha de
+   * entrada/saída - não existe mais stream/preview ao vivo contínuo (ver
+   * histórico: consumia banda do túnel e não era necessário pra contagem).
    */
   @Get('snapshot')
   @ApiQuery({ name: 'cameraId', required: false })
-  @ApiQuery({ name: 'debug', required: false })
-  async snapshot(
-    @Res() res: Response,
-    @Query('cameraId') cameraId?: string,
-    @Query('debug') debug?: string,
-  ): Promise<void> {
+  async snapshot(@Res() res: Response, @Query('cameraId') cameraId?: string): Promise<void> {
     const camera = this.resolveCamera(cameraId);
-    const path = debug === 'true' ? '/vision/debug_snapshot' : '/vision/snapshot';
     try {
-      const edgeRes = await fetch(`${camera.url}${path}`);
+      const edgeRes = await fetch(`${camera.url}/vision/snapshot`);
       if (!edgeRes.ok) {
         res.status(502).json({ message: 'Câmera indisponível' });
         return;
@@ -225,67 +234,6 @@ export class StatsController {
       res.send(buffer);
     } catch {
       res.status(502).json({ message: 'Câmera indisponível' });
-    }
-  }
-
-  /**
-   * Proxeia o stream MJPEG (multipart/x-mixed-replace) de detecção ao vivo
-   * de uma câmera - a aba de validação ao vivo usa isso em vez de ficar
-   * repuxando /snapshot num intervalo, então a imagem lê como vídeo
-   * contínuo em vez de fotos atualizando. Faz streaming de verdade (não
-   * bufferiza a resposta inteira, ela nunca termina sozinha) e aborta a
-   * requisição no edge assim que o navegador fecha a conexão.
-   */
-  @Get('debug-stream')
-  @ApiQuery({ name: 'cameraId', required: false })
-  async debugStream(
-    @Req() req: Request,
-    @Res() res: Response,
-    @Query('cameraId') cameraId?: string,
-  ): Promise<void> {
-    const camera = this.resolveCamera(cameraId);
-    const controller = new AbortController();
-    req.on('close', () => controller.abort());
-    try {
-      const edgeRes = await fetch(`${camera.url}/vision/debug_stream`, {
-        signal: controller.signal,
-      });
-      if (!edgeRes.ok || !edgeRes.body) {
-        res.status(502).json({ message: 'Câmera indisponível' });
-        return;
-      }
-      res.setHeader(
-        'Content-Type',
-        edgeRes.headers.get('content-type') ?? 'multipart/x-mixed-replace',
-      );
-      res.setHeader('Cache-Control', 'no-store');
-      const nodeStream = Readable.fromWeb(edgeRes.body as any);
-      nodeStream.on('error', () => res.end());
-      nodeStream.pipe(res);
-    } catch {
-      if (!res.headersSent) {
-        res.status(502).json({ message: 'Câmera indisponível' });
-      } else {
-        res.end();
-      }
-    }
-  }
-
-  /** Status ao vivo (persons_current, entries/exits, camera_connected etc.)
-   * de uma câmera específica do edge - usado na aba de validação ao vivo
-   * pra explicar o que as bounding boxes do snapshot significam. */
-  @Get('camera-status')
-  @ApiQuery({ name: 'cameraId', required: false })
-  async cameraStatus(@Query('cameraId') cameraId?: string): Promise<Record<string, unknown>> {
-    const camera = this.resolveCamera(cameraId);
-    try {
-      const edgeRes = await fetch(`${camera.url}/vision/status`);
-      if (!edgeRes.ok) {
-        return { error: 'Câmera indisponível' };
-      }
-      return (await edgeRes.json()) as Record<string, unknown>;
-    } catch {
-      return { error: 'Câmera indisponível' };
     }
   }
 

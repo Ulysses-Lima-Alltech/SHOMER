@@ -1,13 +1,34 @@
-# Tracker do SHOMER (ByteTrack) — ajustado a partir do default do ultralytics.
-# Motivo: em cenas com varias pessoas se cruzando, oclusoes curtas (alguem
-# passa atras de outra pessoa por 1-2s) faziam o tracker desistir da track
-# antiga e abrir uma nova id_ao reaparecer, contando a mesma pessoa varias
-# vezes. track_buffer maior segura a track "viva" por mais tempo esperando
-# a pessoa reaparecer antes de descartar.
-tracker_type: bytetrack
+# Tracker do SHOMER (BoT-SORT + ReID) - ajustado a partir do default do
+# ultralytics. Historico: comecou em ByteTrack (so IoU + movimento). Isso
+# segura bem uma track que SOME por 1-2s (oclusao) via track_buffer alto,
+# mas nao resolve troca de identidade quando duas pessoas se cruzam ou se
+# sobrepoem na imagem ao mesmo tempo - exatamente o que acontece na porta,
+# onde a linha de entrada/saida fica. Quando o ID troca no momento do
+# cruzamento, o LineCrossingAnalyzer conta a pessoa errada (ou nenhuma),
+# e a contagem de entradas/saidas nunca bate com a loja real.
+#
+# BoT-SORT com with_reid=True usa a propria feature da rede do YOLO (model:
+# auto - sem modelo extra pra baixar, sem custo relevante) pra desempatar
+# por aparencia quando duas pessoas se sobrepoem, alem do IoU/movimento.
+# Isso e o que reduz troca de ID durante oclusao real, nao so ausencia
+# curta.
+tracker_type: botsort
 track_high_thresh: 0.25
 track_low_thresh: 0.1
 new_track_thresh: 0.35
 track_buffer: 90
 match_thresh: 0.8
 fuse_score: True
+
+# Camera fixa (nao ha movimento de camera pra compensar) - pula o optical
+# flow global motion compensation, que so custaria CPU sem ganho aqui.
+gmc_method: none
+
+# ReID via features nativas do detector YOLO, sem modelo/download extra.
+with_reid: True
+model: auto
+# proximity_thresh/appearance_thresh nos defaults do ultralytics: exige
+# IoU minimo pra sequer considerar comparar aparencia (proximity_thresh),
+# e similaridade minima de aparencia pra aceitar o match (appearance_thresh).
+proximity_thresh: 0.5
+appearance_thresh: 0.8

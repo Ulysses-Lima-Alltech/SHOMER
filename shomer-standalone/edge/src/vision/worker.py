@@ -16,7 +16,6 @@ from src.schedule.business_hours import BusinessHoursGate
 from src.vision.camera import CameraCapture, sanitize_error
 from src.vision.detector import PersonTracker
 from src.vision.models import TrackedPerson, VisionStats
-from src.vision.reid import AppearanceEmbedder
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +28,7 @@ class VisionWorker:
         settings: Settings,
         crossing_event_sink: Callable[[LineCrossingEvent], None] | None = None,
         detection_event_sink: (
-            Callable[[TrackedPerson, int, int, bool, list[float] | None], None] | None
+            Callable[[TrackedPerson, int, int], None] | None
         ) = None,
         business_hours_gate: BusinessHoursGate | None = None,
     ) -> None:
@@ -42,8 +41,6 @@ class VisionWorker:
         )
         self._last_detection_emit: dict[int, float] = {}
         self._last_seen: dict[int, float] = {}
-        self.appearance_reid_enabled = getattr(settings, "APPEARANCE_REID_ENABLED", True)
-        self.appearance_embedder = AppearanceEmbedder()
         self.camera = CameraCapture(
             source=settings.RESOLVED_CAMERA_SOURCE,
             reconnect_seconds=settings.CAMERA_RECONNECT_SECONDS,
@@ -74,18 +71,6 @@ class VisionWorker:
             track_ttl_seconds=settings.LINE_CROSSING_TRACK_TTL_SECONDS,
             crossing_confirm_seconds=getattr(
                 settings, "LINE_CROSSING_CONFIRM_SECONDS", 0.6
-            ),
-            static_filter_enabled=getattr(
-                settings, "STATIC_OBJECT_FILTER_ENABLED", True
-            ),
-            static_min_observation_seconds=getattr(
-                settings, "STATIC_OBJECT_MIN_OBSERVATION_SECONDS", 8.0
-            ),
-            static_max_displacement=getattr(
-                settings, "STATIC_OBJECT_MAX_DISPLACEMENT", 0.03
-            ),
-            static_dwell_max_gap_seconds=getattr(
-                settings, "STATIC_OBJECT_DWELL_MAX_GAP_SECONDS", 30.0
             ),
         )
         self._lock = threading.Lock()
@@ -130,15 +115,7 @@ class VisionWorker:
 
     def status(self) -> VisionStats:
         with self._lock:
-            # Objetos parados (manequins etc.) nao contam como pessoa aqui,
-            # mesmo que o YOLO os classifique como "person" - mesmo filtro
-            # que ja exclui esses tracks do line crossing.
-            active_persons = [
-                person
-                for person in self.persons_current
-                if not self.line_crossing.is_static(person.track_id)
-            ]
-            track_ids = [person.track_id for person in active_persons]
+            track_ids = [person.track_id for person in self.persons_current]
             line_stats = self.line_crossing.stats()
             return VisionStats(
                 mode=self.settings.MODE,
@@ -146,7 +123,7 @@ class VisionWorker:
                 camera_connected=self.camera_connected,
                 model_ready=self.model_ready,
                 frames_processed=self.frames_processed,
-                persons_current=len(active_persons),
+                persons_current=len(self.persons_current),
                 line_crossing_enabled=line_stats.enabled,
                 entries=line_stats.entries,
                 exits=line_stats.exits,
@@ -175,39 +152,6 @@ class VisionWorker:
             return None
         import cv2
 
-        ok, buffer = cv2.imencode(".jpg", frame)
-        if not ok:
-            return None
-        return buffer.tobytes()
-
-    def get_debug_frame_jpeg(self) -> bytes | None:
-        """Latest frame with detection boxes drawn - for diagnosing why
-        persons_current does/doesn't match what a human sees in the camera.
-        Green = counted as a person; red = filtered out as a static object
-        (see LineCrossingAnalyzer.is_static). Not used by the dashboard -
-        debugging/support tool only.
-        """
-        import cv2
-
-        with self._lock:
-            frame = self._latest_frame
-            persons = list(self.persons_current)
-        if frame is None:
-            return None
-        frame = frame.copy()
-        for person in persons:
-            static = self.line_crossing.is_static(person.track_id)
-            color = (0, 0, 255) if static else (0, 255, 0)
-            bbox = person.bbox
-            x1, y1, x2, y2 = int(bbox.x1), int(bbox.y1), int(bbox.x2), int(bbox.y2)
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            label = f"id={person.track_id} conf={person.confidence:.2f}" + (
-                " STATIC" if static else ""
-            )
-            cv2.putText(
-                frame, label, (x1, max(0, y1 - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2,
-            )
         ok, buffer = cv2.imencode(".jpg", frame)
         if not ok:
             return None
@@ -263,7 +207,7 @@ class VisionWorker:
                             self.last_detection_at = detected_at
                             self.last_error = None
                         self._publish_crossing_events(crossing_events)
-                        self._publish_detection_events(persons, width, height, frame)
+                        self._publish_detection_events(persons, width, height)
                     except Exception as exc:
                         self._record_error(f"Detection failed: {exc}")
                         logger.warning("Detection failed", exc_info=True)
@@ -337,7 +281,6 @@ class VisionWorker:
         persons: list[TrackedPerson],
         frame_width: int,
         frame_height: int,
-        frame: Any = None,
     ) -> None:
         if self.detection_event_sink is None:
             return
@@ -363,21 +306,7 @@ class VisionWorker:
             if last_emit is not None and now - last_emit < self.detection_min_interval_seconds:
                 continue
             self._last_detection_emit[person.track_id] = now
-            # Appearance embedding is only computed here (at the throttled
-            # publish rate), never once per frame - OSNet on CPU costs
-            # ~15-20ms per person, too much to run at the full detection FPS.
-            appearance = (
-                self.appearance_embedder.embed(frame, person.bbox)
-                if self.appearance_reid_enabled
-                else None
-            )
             try:
-                self.detection_event_sink(
-                    person,
-                    frame_width,
-                    frame_height,
-                    self.line_crossing.is_static(person.track_id),
-                    appearance,
-                )
+                self.detection_event_sink(person, frame_width, frame_height)
             except Exception:
                 logger.exception("Detection event sink failed")

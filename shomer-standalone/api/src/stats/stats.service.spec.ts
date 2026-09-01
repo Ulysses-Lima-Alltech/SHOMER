@@ -1,5 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import { StatsService, countDistinctPeople, cosineSimilarity } from './stats.service';
+import { StatsService } from './stats.service';
 import { ClickhouseService } from '../clickhouse/clickhouse.service';
 import { TenantsService } from '../tenants/tenants.service';
 
@@ -50,7 +50,12 @@ describe('StatsService', () => {
     const queryRows = jest
       .fn()
       .mockResolvedValueOnce([{ today: '2026-08-09' }])
+      .mockResolvedValueOnce([]) // sem calibração hoje
       .mockResolvedValueOnce([{ peak: '9', peakHour: '14' }])
+      .mockResolvedValueOnce([
+        { direction: 'enter', c: '60' },
+        { direction: 'exit', c: '52' },
+      ])
       .mockResolvedValueOnce([
         { direction: 'enter', c: '60' },
         { direction: 'exit', c: '52' },
@@ -76,7 +81,12 @@ describe('StatsService', () => {
     const queryRows = jest
       .fn()
       .mockResolvedValueOnce([{ today: '2026-08-09' }])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ peak: '9', peakHour: '14' }])
+      .mockResolvedValueOnce([
+        { direction: 'enter', c: '5' },
+        { direction: 'exit', c: '7' },
+      ])
       .mockResolvedValueOnce([
         { direction: 'enter', c: '5' },
         { direction: 'exit', c: '7' },
@@ -94,7 +104,9 @@ describe('StatsService', () => {
     const queryRows = jest
       .fn()
       .mockResolvedValueOnce([{ today: '2026-08-09' }])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ peak: '0', peakHour: null }])
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([])
       .mockResolvedValueOnce([{ lastEvent: '1970-01-01T00:00:00.000Z' }]);
     const clickhouse = { queryRows } as unknown as ClickhouseService;
@@ -104,6 +116,53 @@ describe('StatsService', () => {
 
     expect(overview.currentOccupancy).toBe(0);
     expect(overview.lastEventAt).toBeNull();
+  });
+
+  it('getOverview usa a calibração manual mais recente de hoje como piso da ocupação atual', async () => {
+    const queryRows = jest
+      .fn()
+      .mockResolvedValueOnce([{ today: '2026-08-09' }])
+      .mockResolvedValueOnce([{ count: '3', calibratedAt: '2026-08-09 14:00:00.000' }])
+      .mockResolvedValueOnce([{ peak: '9', peakHour: '14' }])
+      .mockResolvedValueOnce([
+        // total do dia inteiro - não é usado no cálculo da ocupação atual
+        { direction: 'enter', c: '60' },
+        { direction: 'exit', c: '58' },
+      ])
+      .mockResolvedValueOnce([
+        // só desde a calibração: 1 entrada, nenhuma saída
+        { direction: 'enter', c: '1' },
+      ])
+      .mockResolvedValueOnce([{ lastEvent: '2026-08-09T14:32:10.000Z' }]);
+    const clickhouse = { queryRows } as unknown as ClickhouseService;
+    const service = new StatsService(clickhouse, config, tenants);
+
+    const overview = await service.getOverview('tenant-1');
+
+    // 3 (baseline calibrado) + 1 (entrada desde a calibração) - 0 (saídas) = 4
+    expect(overview.currentOccupancy).toBe(4);
+    // entriesToday/exitsToday continuam sendo o total do dia, não afetados
+    expect(overview.entriesToday).toBe(60);
+    expect(overview.exitsToday).toBe(58);
+  });
+
+  it('calibrateOccupancy grava um evento person.occupancy_calibrated com o count informado', async () => {
+    const insert = jest.fn().mockResolvedValue(undefined);
+    const clickhouse = {
+      getClient: () => ({ insert }),
+    } as unknown as ClickhouseService;
+    const service = new StatsService(clickhouse, config, tenants);
+
+    await service.calibrateOccupancy('tenant-1', 3);
+
+    expect(insert).toHaveBeenCalledTimes(1);
+    const call = insert.mock.calls[0][0];
+    expect(call.table).toBe('events');
+    expect(call.values[0]).toMatchObject({
+      tenant_id: 'tenant-1',
+      type: 'person.occupancy_calibrated',
+    });
+    expect(JSON.parse(call.values[0].payload)).toMatchObject({ count: 3 });
   });
 
   it('getDaily preenche todos os dias do período, mesmo os sem dados', async () => {
@@ -264,80 +323,5 @@ describe('StatsService', () => {
         payload: { trackId: '7' },
       },
     ]);
-  });
-});
-
-describe('cosineSimilarity', () => {
-  it('retorna 1 para vetores unitarios identicos', () => {
-    // [0.6, 0.8] tem norma 1 (0.6^2 + 0.8^2 = 1) - como os embeddings do
-    // OSNet, que ja vem L2-normalizados do edge.
-    expect(cosineSimilarity([0.6, 0.8], [0.6, 0.8])).toBeCloseTo(1);
-  });
-
-  it('retorna 0 para vetores ortogonais (nenhuma semelhanca)', () => {
-    expect(cosineSimilarity([1, 0], [0, 1])).toBe(0);
-  });
-
-  it('retorna um valor intermediario para vetores parecidos mas nao identicos', () => {
-    const value = cosineSimilarity([0.6, 0.8], [0.8, 0.6]);
-    expect(value).toBeCloseTo(0.96);
-  });
-});
-
-describe('countDistinctPeople', () => {
-  it('conta cada (camera, track) separadamente quando nao ha aparencia', () => {
-    const count = countDistinctPeople([
-      { cameraId: 'cam-1', trackId: '1', appearance: null, timestampMs: 1000 },
-      { cameraId: 'cam-2', trackId: '1', appearance: null, timestampMs: 1000 },
-    ]);
-    expect(count).toBe(2);
-  });
-
-  it('funde duas cameras diferentes vendo a mesma pessoa no mesmo instante', () => {
-    const sameColor = [0.9, 0.1];
-    const count = countDistinctPeople([
-      { cameraId: 'cam-1', trackId: '1', appearance: sameColor, timestampMs: 1000 },
-      { cameraId: 'cam-2', trackId: '5', appearance: sameColor, timestampMs: 1500 },
-    ]);
-    expect(count).toBe(1);
-  });
-
-  it('nao funde detecoes distantes no tempo mesmo com aparencia identica', () => {
-    const sameColor = [0.9, 0.1];
-    const count = countDistinctPeople([
-      { cameraId: 'cam-1', trackId: '1', appearance: sameColor, timestampMs: 1000 },
-      { cameraId: 'cam-2', trackId: '5', appearance: sameColor, timestampMs: 10000 },
-    ]);
-    expect(count).toBe(2);
-  });
-
-  it('nao funde cores muito diferentes mesmo no mesmo instante', () => {
-    const count = countDistinctPeople([
-      { cameraId: 'cam-1', trackId: '1', appearance: [1, 0], timestampMs: 1000 },
-      { cameraId: 'cam-2', trackId: '5', appearance: [0, 1], timestampMs: 1000 },
-    ]);
-    expect(count).toBe(2);
-  });
-
-  it('nao funde duas pessoas diferentes na MESMA camera, mesmo com aparencia parecida', () => {
-    const sameColor = [0.9, 0.1];
-    const count = countDistinctPeople([
-      { cameraId: 'cam-1', trackId: '1', appearance: sameColor, timestampMs: 1000 },
-      { cameraId: 'cam-1', trackId: '2', appearance: sameColor, timestampMs: 1000 },
-    ]);
-    expect(count).toBe(2);
-  });
-
-  it('funde tres cameras por transitividade mesmo quando a primeira e a ultima estao fora da janela direta', () => {
-    const sameColor = [0.9, 0.1];
-    // cam-1↔cam-2 e cam-2↔cam-3 estao dentro da janela de 2s, mas
-    // cam-1↔cam-3 sozinhos (diferenca de 3s) nao estariam - o union-find
-    // ainda assim funde os tres num unico grupo via cam-2.
-    const count = countDistinctPeople([
-      { cameraId: 'cam-1', trackId: '1', appearance: sameColor, timestampMs: 0 },
-      { cameraId: 'cam-2', trackId: '2', appearance: sameColor, timestampMs: 1500 },
-      { cameraId: 'cam-3', trackId: '3', appearance: sameColor, timestampMs: 3000 },
-    ]);
-    expect(count).toBe(1);
   });
 });

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { randomUUID } from 'crypto';
 import { ConfigService } from '@nestjs/config';
 import { ClickhouseService } from '../clickhouse/clickhouse.service';
 import { TenantsService } from '../tenants/tenants.service';
@@ -19,76 +20,6 @@ export interface MovementBucket {
   period: string;
   label: 'Baixo' | 'Médio' | 'Alto';
   value: number;
-}
-
-interface DetectionSample {
-  cameraId: string;
-  trackId: string;
-  appearance: number[] | null;
-  timestampMs: number;
-}
-
-const CROSS_CAMERA_TIME_WINDOW_MS = 2000;
-// Embeddings do OSNet (edge/src/vision/reid.py) sao vetores unitarios
-// (L2-normalizados), entao similaridade de cosseno = produto escalar direto,
-// no intervalo [-1, 1]. 0.6 e um ponto de partida razoavel pra "mesma
-// pessoa" nesse modelo/resolucao de camera - precisa validar com dados reais
-// assim que as cameras da loja voltarem (rede caiu durante a implementacao
-// desta feature) e ajustar se houver falsos positivos/negativos.
-const CROSS_CAMERA_SIMILARITY_THRESHOLD = 0.6;
-
-/** Similaridade de cosseno entre dois embeddings de re-identificacao. Os
- * vetores ja vem L2-normalizados do edge (ver AppearanceEmbedder em
- * src/vision/reid.py), entao isso e so o produto escalar. */
-export function cosineSimilarity(a: number[], b: number[]): number {
-  const len = Math.min(a.length, b.length);
-  let dot = 0;
-  for (let i = 0; i < len; i++) dot += a[i] * b[i];
-  return dot;
-}
-
-/**
- * Deduplica detecções da MESMA pessoa física vista por câmeras DIFERENTES
- * com campo de visão sobreposto, no mesmo instante - achado na aba de
- * validação ao vivo: "Caixa" e "Roupas" compartilham boa parte da cena, e
- * cada câmera roda seu próprio ByteTrack sem noção da outra. Dentro de uma
- * mesma câmera o track_id do ByteTrack já é a fonte da verdade de
- * identidade - essa função só une clusters entre câmeras diferentes,
- * comparando proximidade de tempo + similaridade do embedding de
- * re-identificação (OSNet, calculado no edge). Não é um sistema completo de
- * rastreio multi-câmera com calibração geométrica - cobre bem o caso de
- * câmeras que compartilham o mesmo espaço e capturam o mesmo instante.
- * Retorna a contagem de pessoas físicas distintas.
- */
-export function countDistinctPeople(samples: DetectionSample[]): number {
-  const parent = samples.map((_, i) => i);
-  const find = (x: number): number => {
-    while (parent[x] !== x) {
-      parent[x] = parent[parent[x]];
-      x = parent[x];
-    }
-    return x;
-  };
-  const union = (a: number, b: number) => {
-    const ra = find(a);
-    const rb = find(b);
-    if (ra !== rb) parent[ra] = rb;
-  };
-
-  for (let i = 0; i < samples.length; i++) {
-    for (let j = i + 1; j < samples.length; j++) {
-      const a = samples[i];
-      const b = samples[j];
-      if (a.cameraId === b.cameraId) continue;
-      if (!a.appearance || !b.appearance) continue;
-      if (Math.abs(a.timestampMs - b.timestampMs) > CROSS_CAMERA_TIME_WINDOW_MS) continue;
-      if (cosineSimilarity(a.appearance, b.appearance) >= CROSS_CAMERA_SIMILARITY_THRESHOLD) {
-        union(i, j);
-      }
-    }
-  }
-
-  return new Set(samples.map((_, i) => find(i))).size;
 }
 
 export interface OverviewStats {
@@ -199,15 +130,13 @@ export class StatsService {
   }
 
   /**
-   * Enquanto a fusão multi-câmera (countDistinctPeople) não estiver confiável
-   * o bastante — câmeras com campo de visão sobreposto ainda geram track_ids
-   * diferentes pra mesma pessoa física com frequência maior do que o
-   * esperado — o cliente pediu pra validar as métricas usando só UMA câmera
-   * (Roupas 2 / camera-03) como fonte da verdade, em vez de somar/fundir as
-   * 4. As 4 câmeras continuam rodando e visíveis na Validação ao vivo; isso
-   * só afeta as métricas agregadas (Agora, entradas/saídas, hoje, série
-   * histórica). Setar STATS_SINGLE_CAMERA_ID vazio/ausente volta ao
-   * comportamento multi-câmera com fusão.
+   * O cliente pediu pra validar as métricas usando só UMA câmera (Roupas 2 /
+   * camera-03) como fonte da verdade, em vez de somar as 4 - câmeras com
+   * campo de visão sobreposto geravam contagem duplicada. As 4 câmeras
+   * continuam rodando e visíveis na Validação ao vivo; isso só afeta as
+   * métricas agregadas (Agora, entradas/saídas, hoje, série histórica).
+   * Setar STATS_SINGLE_CAMERA_ID vazio/ausente volta a somar todas as
+   * câmeras.
    */
   private get singleCameraId(): string | undefined {
     return this.config.get<string>('STATS_SINGLE_CAMERA_ID') || undefined;
@@ -230,36 +159,63 @@ export class StatsService {
     return rows[0]?.today ?? new Date().toISOString().slice(0, 10);
   }
 
-  /** Agora = pessoas distintas detectadas nos ultimos 5s, nao
-   * entradas-saidas de hoje: se o tracking cair e voltar (rede, reinicio)
-   * com gente ja dentro da loja, o saldo de cruzamentos fica zerado mesmo
-   * com gente visivel em quadro - o cliente ve "Agora: 0" com pessoas na
-   * tela ao vivo. O edge reemite person.detected por track a cada
-   * DETECTION_EVENTS_MIN_INTERVAL_SECONDS (2s por padrao) enquanto a
-   * pessoa estiver em quadro.
-   *
-   * A janela era 10s antes, mas isso causava SUPERCONTAGEM: pegamos so a
-   * deteccao mais recente por (camera, track) e so fundimos entre CAMERAS
-   * DIFERENTES (dentro da mesma camera confiamos no track_id do
-   * ByteTrack). Se o ByteTrack troca o id de uma pessoa (perde e reganha o
-   * rastreamento - ainda acontece as vezes mesmo com o tracker ajustado),
-   * o id antigo fica "recente o suficiente" pra continuar contando junto
-   * com o id novo por ate 10s inteiros, dobrando essa pessoa. Uma janela
-   * mais curta (~2.5x o intervalo de publicacao) deixa o id antigo
-   * "envelhecer" e sair da contagem rapido, sem cobrir tantas reemissoes
-   * a ponto do id trocado persistir como dois.
-   *
-   * JSONExtractBool(payload,'isStatic') com chave ausente (eventos
-   * antigos) retorna false por padrao no ClickHouse, entao eventos
-   * gravados antes desse campo existir continuam contando - aceitavel, o
-   * objetivo aqui e so parar de contar manequins daqui pra frente.
-   * countDistinctPeople funde detecções de câmeras diferentes que são a
-   * mesma pessoa física (câmeras com campo de visão sobreposto). */
+  /**
+   * Grava uma correção manual da ocupação atual (ex: "tem 3 pessoas na loja
+   * agora" contado por um funcionário) - existe porque o saldo
+   * entradas-saídas parte de 0 sempre que o processo de tracking reinicia
+   * (queda de energia, deploy, restart manual), e qualquer pessoa que já
+   * estava dentro da loja nesse momento vira invisível pro saldo: quando
+   * ela sair, sobra uma saída sem entrada correspondente, jogando o saldo
+   * pro negativo (truncado em 0 pelo max() de getOverview) pelo resto do
+   * dia. getOverview usa a calibração mais recente de hoje como piso e soma
+   * só entradas/saídas DEPOIS dela, em vez de zerar o dia inteiro.
+   */
+  async calibrateOccupancy(tenantId: string, count: number): Promise<void> {
+    const cameraId = this.singleCameraId;
+    await this.clickhouse.getClient().insert({
+      table: this.config.get<string>('CLICKHOUSE_EVENTS_TABLE', 'events'),
+      values: [
+        {
+          event_id: randomUUID(),
+          timestamp: new Date().toISOString().replace('T', ' ').replace('Z', ''),
+          tenant_id: tenantId,
+          store_id: null,
+          type: 'person.occupancy_calibrated',
+          event_version: 'v1',
+          payload: JSON.stringify({ count, ...(cameraId ? { cameraId } : {}) }),
+        },
+      ],
+      format: 'JSONEachRow',
+    });
+  }
+
+  /** Agora = baseline da calibração manual mais recente de hoje (0 se nunca
+   * calibrado) + entradas - saídas na câmera fonte da verdade (ver
+   * singleCameraId acima) DESDE essa calibração - ver calibrateOccupancy
+   * acima pro motivo de não ser só entradas-saídas do dia inteiro. Não é
+   * detecção ao vivo - ver currentOccupancy mais abaixo. */
   async getOverview(tenantId: string): Promise<OverviewStats> {
     const today = await this.getLocalToday();
     const tz = this.timezone;
 
-    const [peakRows, directionRows, lastEventRows] =
+    const calibrationRows = await this.clickhouse.queryRows<{ count: string; calibratedAt: string }>(
+      `SELECT JSONExtractInt(payload, 'count') AS count,
+              formatDateTime(timestamp, '%Y-%m-%d %H:%i:%S.%f') AS calibratedAt
+       FROM events
+       WHERE tenant_id = {tenantId:String}
+         AND type = 'person.occupancy_calibrated'
+         AND toDate(timestamp, {tz:String}) = {today:Date}
+         ${this.cameraScopeSql()}
+       ORDER BY timestamp DESC
+       LIMIT 1`,
+      { tenantId, tz, today, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
+    );
+    const calibration = calibrationRows[0];
+    const sinceSql = calibration
+      ? 'AND timestamp > {calibratedAt:String}'
+      : 'AND toDate(timestamp, {tz:String}) = {today:Date}';
+
+    const [peakRows, directionRows, sinceCalibrationRows, lastEventRows] =
       await Promise.all([
         // Pico do dia = maior ocupação simultânea (saldo de entradas-saídas
         // ao longo do dia), não a hora com mais eventos "detected": raw
@@ -282,6 +238,10 @@ export class StatsService {
            )`,
           { tenantId, tz, today, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
         ),
+        // Totais do dia inteiro - usados em visitorsToday/entriesToday/
+        // exitsToday, que são métricas de "hoje", não de ocupação atual.
+        // Não usa sinceSql: uma calibração corrige só currentOccupancy
+        // (ver abaixo), não o total de visitantes do dia.
         this.clickhouse.queryRows<{ direction: string; c: string }>(
           // O edge grava a direção como ENTER/EXIT (maiúsculo); normaliza
           // aqui para não depender da grafia exata do payload.
@@ -293,6 +253,25 @@ export class StatsService {
              ${this.cameraScopeSql()}
            GROUP BY direction`,
           { tenantId, tz, today, ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}) },
+        ),
+        // Entradas/saídas SÓ desde a última calibração (ou o dia inteiro, se
+        // nunca calibrado) - a base do cálculo de currentOccupancy abaixo,
+        // separado de entriesToday/exitsToday que são totais do dia inteiro.
+        this.clickhouse.queryRows<{ direction: string; c: string }>(
+          `SELECT lower(JSONExtractString(payload, 'direction')) AS direction, count() AS c
+           FROM events
+           WHERE tenant_id = {tenantId:String}
+             AND type = 'person.line_crossed'
+             ${sinceSql}
+             ${this.cameraScopeSql()}
+           GROUP BY direction`,
+          {
+            tenantId,
+            tz,
+            today,
+            ...(calibration ? { calibratedAt: calibration.calibratedAt } : {}),
+            ...(this.singleCameraId ? { singleCameraId: this.singleCameraId } : {}),
+          },
         ),
         // Qualquer tipo de evento conta para "sistema ativo" — inclui
         // edge.health.reported, não só detecções de pessoas.
@@ -310,14 +289,26 @@ export class StatsService {
     const exitsToday = Number(
       directionRows.find((r) => r.direction === 'exit')?.c ?? 0,
     );
+    const entriesSinceCalibration = Number(
+      sinceCalibrationRows.find((r) => r.direction === 'enter')?.c ?? 0,
+    );
+    const exitsSinceCalibration = Number(
+      sinceCalibrationRows.find((r) => r.direction === 'exit')?.c ?? 0,
+    );
     const lastEvent = lastEventRows[0]?.lastEvent;
-    // Agora = entradas - saídas (quem cruzou a linha pra dentro e ainda não
-    // cruzou pra fora), não detecção ao vivo de uma câmera: a detecção só
-    // reflete quem está no campo de visão daquela câmera especificamente
-    // naquele instante, então alguém que entrou e está em outra parte da
-    // loja (fora do ângulo da câmera da linha) sumia do "Agora" mesmo
-    // continuando dentro. O saldo do livro-razão é o dado real.
-    const currentOccupancy = Math.max(0, entriesToday - exitsToday);
+    // Agora = baseline (última calibração manual de hoje, 0 se nunca
+    // calibrado) + entradas - saídas DESDE essa calibração, não detecção ao
+    // vivo de uma câmera: a detecção só reflete quem está no campo de visão
+    // daquela câmera especificamente naquele instante, então alguém que
+    // entrou e está em outra parte da loja (fora do ângulo da câmera da
+    // linha) sumia do "Agora" mesmo continuando dentro. O saldo do
+    // livro-razão é o dado real - e a calibração corrige o ponto de partida
+    // desse livro-razão quando o tracking reinicia com gente já dentro.
+    const calibrationBaseline = Number(calibration?.count ?? 0);
+    const currentOccupancy = Math.max(
+      0,
+      calibrationBaseline + entriesSinceCalibration - exitsSinceCalibration,
+    );
 
     return {
       // visitorsToday = entradas hoje, não count(person.detected): um
@@ -597,7 +588,6 @@ export class StatsService {
        FROM events
        WHERE tenant_id = {tenantId:String}
          AND type = 'person.detected'
-         AND NOT JSONExtractBool(payload, 'isStatic')
          AND JSONHas(payload, 'floorPoint')
          AND timestamp >= parseDateTime64BestEffort({from:String})
          AND timestamp < parseDateTime64BestEffort({to:String})

@@ -142,15 +142,11 @@ async def lifespan(app: FastAPI):
                         person,
                         frame_width,
                         frame_height,
-                        is_static,
-                        appearance,
                         _publisher=event_publisher,
                         _factory=detection_factory,
                     ):
                         _publisher.enqueue_envelope_from_thread(
-                            _factory.create(
-                                person, frame_width, frame_height, is_static, appearance
-                            )
+                            _factory.create(person, frame_width, frame_height)
                         )
 
             business_hours_gate = None

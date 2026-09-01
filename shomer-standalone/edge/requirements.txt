@@ -1,3 +1,9 @@
+# torch/torchvision nao estao aqui de proposito: pip install -r sozinho traria
+# a build CPU do PyPI. Pra usar a GPU (essencial - CPU roda YOLO a <1fps,
+# grande demais pro line-crossing acompanhar gente andando), instale antes:
+#   pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision
+# (cu128 cobre GPUs Blackwell/RTX 50-series; ajuste o tag cuXXX pra sua GPU.
+# Tambem exige Smart App Control desligado no Windows - ver historico do commit.)
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 pydantic==2.5.2
@@ -8,11 +14,6 @@ opencv-python-headless
 numpy
 ultralytics
 tzdata
-# Modelo leve de re-identificacao (OSNet) usado por src/vision/reid.py pra
-# reconhecer a mesma pessoa fisica entre cameras com campo de visao
-# sobreposto - ver countDistinctPeople na API. Baixa os pesos (~3MB) do
-# OSNet automaticamente no primeiro uso.
-boxmot
 
 
 

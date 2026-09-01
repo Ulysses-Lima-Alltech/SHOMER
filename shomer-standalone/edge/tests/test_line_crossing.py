@@ -49,10 +49,6 @@ def analyzer(
     cooldown: float = 1.0,
     ttl: float = 10.0,
     confirm_seconds: float = 0.0,
-    static_filter_enabled: bool = True,
-    static_min_observation_seconds: float = 8.0,
-    static_max_displacement: float = 0.03,
-    static_dwell_max_gap_seconds: float = 30.0,
 ) -> LineCrossingAnalyzer:
     return LineCrossingAnalyzer(
         enabled=enabled,
@@ -64,10 +60,6 @@ def analyzer(
         cooldown_seconds=cooldown,
         track_ttl_seconds=ttl,
         crossing_confirm_seconds=confirm_seconds,
-        static_filter_enabled=static_filter_enabled,
-        static_min_observation_seconds=static_min_observation_seconds,
-        static_max_displacement=static_max_displacement,
-        static_dwell_max_gap_seconds=static_dwell_max_gap_seconds,
     )
 
 
@@ -451,7 +443,7 @@ class LineCrossingTests(unittest.TestCase):
         # Mimics someone sitting near the line with a leg stretched past it:
         # feet (bottom_center) cross, but the torso (body_center) never does,
         # even after a long stretch of frames - must never count as a crossing.
-        subject = analyzer(confirm_seconds=0.5, static_filter_enabled=False)
+        subject = analyzer(confirm_seconds=0.5)
 
         process_one_bbox(subject, 10, 5, 15, 0)  # fully on SIDE_B at first
         for seconds in (1, 3, 6, 10, 20):
@@ -484,38 +476,88 @@ class LineCrossingTests(unittest.TestCase):
         self.assertEqual(events, [])
         self.assertEqual(subject.stats().entries, 0)
 
-    def test_static_object_never_counts_line_crossing(self):
-        # Mimics a mannequin: sits still near the line, then a small bbox
-        # jitter (not real movement) nudges it across the dead zone.
-        subject = analyzer(
-            tolerance=0.005,
-            static_min_observation_seconds=5.0,
-            static_max_displacement=0.03,
+    def test_pending_crossing_confirms_when_track_vanishes_before_next_frame(self):
+        # Someone walking out of frame right after crossing (e.g. through a
+        # doorway at the edge of the camera's view) may never get another
+        # detection to run the normal confirm check on. The crossing must
+        # still be counted once the track ages out, using the torso position
+        # from the last frame it was actually seen.
+        subject = analyzer(confirm_seconds=0.5, ttl=2.0)
+
+        process_one(subject, 10, 50, 80, 0)
+        pending = process_one(subject, 10, 50, 20, 1.0)  # foot+body both cross
+        self.assertEqual(pending, [])  # not yet confirmed - confirm delay hasn't elapsed
+
+        # Track never seen again; once ttl elapses the pending crossing (with
+        # its already-agreeing torso) must confirm instead of being dropped.
+        expired = subject.process(
+            [], FRAME_WIDTH, FRAME_HEIGHT, now=BASE_TIME + timedelta(seconds=4.0)
         )
 
-        process_one(subject, 99, 50, 51, 0)
-        process_one(subject, 99, 50, 51, 2)
-        process_one(subject, 99, 50, 51, 4)
-        events = process_one(subject, 99, 50, 49, 6)
-        more_events = process_one(subject, 99, 50, 51, 8)
+        self.assertEqual(len(expired), 1)
+        self.assertEqual(expired[0].direction, CrossingDirection.ENTER)
+        self.assertEqual(subject.stats().entries, 1)
+        self.assertEqual(subject.tracked_state_count, 0)
 
-        self.assertEqual(events, [])
-        self.assertEqual(more_events, [])
+    def test_pending_crossing_does_not_confirm_on_expiry_without_body_agreement(self):
+        # Mirrors test_foot_poking_past_line_without_torso_never_counts, but
+        # via the track disappearing (ttl expiry) instead of staying visible:
+        # a foot poked past the line with the torso never following must
+        # still never count, even once the track ages out.
+        subject = analyzer(confirm_seconds=0.5, ttl=2.0)
+
+        process_one_bbox(subject, 10, 5, 15, 0)  # fully on original side
+        pending = process_one_bbox(subject, 10, 30, 55, 1.0)  # foot crosses, torso doesn't
+        self.assertEqual(pending, [])
+
+        expired = subject.process(
+            [], FRAME_WIDTH, FRAME_HEIGHT, now=BASE_TIME + timedelta(seconds=4.0)
+        )
+
+        self.assertEqual(expired, [])
         self.assertEqual(subject.stats().entries, 0)
         self.assertEqual(subject.stats().exits, 0)
 
-    def test_real_person_crossing_past_static_window_still_counts(self):
-        # A person who happens to still be walking after the static
-        # observation window must not be mistaken for a static object: real
-        # displacement disqualifies the static classification.
-        subject = analyzer(static_min_observation_seconds=5.0, static_max_displacement=0.03)
+    def test_bottom_edge_clipped_skips_body_agreement_check(self):
+        # A person mostly out of frame through a doorway near the bottom edge
+        # gets their bbox clipped to the image boundary by the detector - the
+        # visible sliver's midpoint no longer approximates the real torso, so
+        # requiring it to agree with the feet would reject a genuine crossing
+        # forever. y2 at (or past) frame_height signals a clipped box.
+        subject = analyzer(confirm_seconds=0.0)
 
-        process_one(subject, 20, 50, 80, 0)
-        events = process_one(subject, 20, 50, 20, 6)
+        process_one_bbox(subject, 10, 10, 20, 0)  # fully on SIDE_B, not clipped
+        events = process_one_bbox(subject, 10, -100, 100, 1)  # foot clipped at edge; body would disagree
 
         self.assertEqual(len(events), 1)
-        self.assertEqual(events[0].direction, CrossingDirection.ENTER)
-        self.assertEqual(subject.stats().entries, 1)
+        self.assertEqual(events[0].direction, CrossingDirection.EXIT)
+        self.assertEqual(subject.stats().exits, 1)
+
+    def test_non_clipped_box_still_requires_body_agreement(self):
+        # Sanity check that the clip bypass is specific to a genuinely
+        # clipped box, not a general loosening of the body check.
+        subject = analyzer(confirm_seconds=0.0)
+
+        process_one_bbox(subject, 10, 10, 20, 0)
+        events = process_one_bbox(subject, 10, -100, 99, 1)  # y2 short of the frame edge - not clipped
+
+        self.assertEqual(events, [])
+        self.assertEqual(subject.stats().exits, 0)
+
+    def test_bottom_edge_clipped_confirms_on_expiry_without_body_agreement(self):
+        subject = analyzer(confirm_seconds=0.5, ttl=2.0)
+
+        process_one_bbox(subject, 10, 10, 20, 0)
+        pending = process_one_bbox(subject, 10, -100, 100, 1.0)  # clipped, body disagrees
+        self.assertEqual(pending, [])
+
+        expired = subject.process(
+            [], FRAME_WIDTH, FRAME_HEIGHT, now=BASE_TIME + timedelta(seconds=4.0)
+        )
+
+        self.assertEqual(len(expired), 1)
+        self.assertEqual(expired[0].direction, CrossingDirection.EXIT)
+        self.assertEqual(subject.stats().exits, 1)
 
     def test_brief_track_gap_does_not_duplicate_count(self):
         # A short tracking gap (occlusion) within the track TTL must not
@@ -531,126 +573,6 @@ class LineCrossingTests(unittest.TestCase):
         self.assertEqual(events[0].direction, CrossingDirection.ENTER)
         self.assertEqual(subject.stats().entries, 1)
         self.assertEqual(subject.stats().exits, 0)
-
-    def test_is_static_reflects_stationary_track(self):
-        subject = analyzer(
-            tolerance=0.005,
-            static_min_observation_seconds=5.0,
-            static_max_displacement=0.03,
-        )
-
-        self.assertFalse(subject.is_static(99))
-        process_one(subject, 99, 50, 51, 0)
-        self.assertFalse(subject.is_static(99))
-        process_one(subject, 99, 50, 51, 4)
-        self.assertFalse(subject.is_static(99))
-        process_one(subject, 99, 50, 51, 6)
-        self.assertTrue(subject.is_static(99))
-
-    def test_is_static_false_for_moving_track(self):
-        subject = analyzer(static_min_observation_seconds=5.0, static_max_displacement=0.03)
-
-        process_one(subject, 20, 50, 80, 0)
-        process_one(subject, 20, 50, 20, 6)
-
-        self.assertFalse(subject.is_static(20))
-
-    def test_is_static_survives_track_id_churn_at_same_position(self):
-        # A mannequin's ByteTrack id can flip (lighting, brief occlusion) -
-        # once a position has been proven static, a brand-new track_id
-        # appearing at that same spot must be recognized immediately,
-        # without waiting out static_min_observation_seconds again.
-        subject = analyzer(static_min_observation_seconds=5.0, static_max_displacement=0.03)
-
-        process_one(subject, 40, 50, 51, 0)
-        process_one(subject, 40, 50, 51, 6)
-        self.assertTrue(subject.is_static(40))
-
-        # track 40 vanishes (id churn) and a new id appears at the same spot
-        process_one(subject, 41, 50, 51, 6.1)
-        self.assertTrue(subject.is_static(41))
-
-    def test_is_static_survives_process_restart_style_track_reset(self):
-        subject = analyzer(static_min_observation_seconds=5.0, static_max_displacement=0.03)
-
-        process_one(subject, 40, 50, 51, 0)
-        process_one(subject, 40, 50, 51, 6)
-        self.assertTrue(subject.is_static(40))
-
-        subject.reset_tracks()
-
-        # Brand-new track at the same known-static position: recognized
-        # right away even though its own observation clock just started.
-        events = process_one(subject, 99, 50, 51, 6.2)
-        self.assertTrue(subject.is_static(99))
-        self.assertEqual(events, [])
-
-    def test_new_track_at_unrelated_position_still_needs_full_observation(self):
-        subject = analyzer(static_min_observation_seconds=5.0, static_max_displacement=0.03)
-
-        process_one(subject, 40, 50, 51, 0)
-        process_one(subject, 40, 50, 51, 6)
-        self.assertTrue(subject.is_static(40))
-
-        process_one(subject, 50, 20, 20, 6.1)
-        self.assertFalse(subject.is_static(50))
-
-    def test_is_static_accumulates_across_track_id_churn_no_single_track_survives(self):
-        # Real-world failure mode: a borderline-confidence detection (mannequin,
-        # bag on a chair) flickers in and out of YOLO's output, so its track_id
-        # churns every couple seconds - no single track ever survives long
-        # enough to reach static_min_observation_seconds on its own. Dwell time
-        # at that position must still accumulate across the churn and the spot
-        # must eventually be recognized as static.
-        subject = analyzer(
-            static_min_observation_seconds=10.0,
-            static_max_displacement=0.03,
-            static_dwell_max_gap_seconds=5.0,
-        )
-
-        track_id = 1
-        seconds = 0.0
-        while seconds < 12.0:
-            process_one(subject, track_id, 50, 51, seconds)
-            self.assertFalse(subject.is_static(track_id))
-            seconds += 3.0
-            track_id += 1  # id churns before any single track ages out
-
-        process_one(subject, track_id, 50, 51, seconds)
-        self.assertTrue(subject.is_static(track_id))
-
-    def test_static_dwell_does_not_bridge_a_real_long_absence(self):
-        # If the gap between sightings at a position exceeds
-        # static_dwell_max_gap_seconds, that gap must not count toward the
-        # cumulative total - otherwise an object that was genuinely removed
-        # and only coincidentally replaced later would falsely inherit the
-        # earlier object's dwell time.
-        subject = analyzer(
-            static_min_observation_seconds=10.0,
-            static_max_displacement=0.03,
-            static_dwell_max_gap_seconds=5.0,
-        )
-
-        process_one(subject, 1, 50, 51, 0)
-        process_one(subject, 2, 50, 51, 4)  # gap of 4s < 5s cap: counts
-        self.assertFalse(subject.is_static(2))
-
-        # a 100s gap (well past the cap) before something reappears there
-        process_one(subject, 3, 50, 51, 104)
-        self.assertFalse(subject.is_static(3))
-
-    def test_is_static_false_when_filter_disabled(self):
-        subject = analyzer(
-            static_filter_enabled=False,
-            tolerance=0.005,
-            static_min_observation_seconds=5.0,
-            static_max_displacement=0.03,
-        )
-
-        process_one(subject, 99, 50, 51, 0)
-        process_one(subject, 99, 50, 51, 6)
-
-        self.assertFalse(subject.is_static(99))
 
     def test_status_includes_counters(self):
         request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
