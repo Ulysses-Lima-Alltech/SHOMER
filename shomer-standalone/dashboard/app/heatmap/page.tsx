@@ -161,20 +161,32 @@ export default function HeatmapPage() {
 
     const gridSize = heatmap.gridSize;
     const maxCount = heatmap.maxCount;
+    // Sensibilidade: sem isso, uma loja com fluxo bem distribuído (pico só
+    // com ~3% dos pontos, o normal quando a câmera cobre a loja inteira)
+    // faz quase toda célula tocada ficar em 30-60% do valor do pico - já
+    // amarelo/laranja na paleta - cobrindo o quadro inteiro de "quente" e
+    // escondendo justamente as zonas que se destacam de verdade. HEAT_GAMMA
+    // > 1 empurra os valores médios pra baixo (só quem chega perto do pico
+    // continua vermelho); só uma fração mínima ainda visível como verde bem
+    // fraco, o resto esmaece.
+    const HEAT_GAMMA = 2.4;
     const points: HeatPoint[] = heatmap.cells
       .filter((cell) => cell.count > 0)
       .map((cell) => ({
         x: (cell.x + 0.5) / gridSize,
         y: (cell.y + 0.5) / gridSize,
-        value: maxCount > 0 ? cell.count / maxCount : 0,
+        value: maxCount > 0 ? Math.pow(cell.count / maxCount, HEAT_GAMMA) : 0,
       }));
 
     const render = () => {
       const cellPx = canvas.clientWidth / gridSize;
       drawHeatmap(canvas, points, {
-        radius: cellPx * 1.3,
-        blur: cellPx * 1.1,
-        minOpacity: 0.18,
+        // Raio/blur mais próximos do tamanho da própria célula (eram 1.3x/
+        // 1.1x) - blobs muito maiores que a célula vazavam pras vizinhas e
+        // fundiam áreas de densidade bem diferente num blob só.
+        radius: cellPx * 0.9,
+        blur: cellPx * 0.6,
+        minOpacity: 0.05,
       });
     };
 
