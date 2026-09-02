@@ -533,13 +533,30 @@ class LineCrossingTests(unittest.TestCase):
         self.assertEqual(events[0].direction, CrossingDirection.EXIT)
         self.assertEqual(subject.stats().exits, 1)
 
+    def test_line_near_bottom_edge_skips_body_agreement_without_literal_clipping(self):
+        # A steeply overhead camera with its line drawn near the bottom of
+        # frame: the person's feet cross well before their bbox literally
+        # touches the last pixel row, but the perspective still puts their
+        # head/torso far enough above their feet that body_center never
+        # agrees with bottom_center for a real crossing - not lag, a fixed
+        # property of the angle. y2=97 on a 100px-tall frame is short of the
+        # old exact-edge check but within the new relative margin.
+        subject = analyzer(confirm_seconds=0.0)
+
+        process_one_bbox(subject, 10, 10, 20, 0)  # fully on SIDE_B
+        events = process_one_bbox(subject, 10, -100, 97, 1)  # feet crossed; body still disagrees
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].direction, CrossingDirection.EXIT)
+        self.assertEqual(subject.stats().exits, 1)
+
     def test_non_clipped_box_still_requires_body_agreement(self):
         # Sanity check that the clip bypass is specific to a genuinely
         # clipped box, not a general loosening of the body check.
         subject = analyzer(confirm_seconds=0.0)
 
         process_one_bbox(subject, 10, 10, 20, 0)
-        events = process_one_bbox(subject, 10, -100, 99, 1)  # y2 short of the frame edge - not clipped
+        events = process_one_bbox(subject, 10, -100, 80, 1)  # y2 well clear of the frame edge - not clipped
 
         self.assertEqual(events, [])
         self.assertEqual(subject.stats().exits, 0)

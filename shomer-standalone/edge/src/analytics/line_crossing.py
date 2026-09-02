@@ -379,14 +379,27 @@ def body_center(
 
 
 def is_bottom_edge_clipped(person: TrackedPerson, frame_height: int) -> bool:
-    """Whether the bbox's bottom edge sits at (or past) the image boundary.
+    """Whether the bbox's bottom edge sits at (or effectively at) the image
+    boundary.
 
     Detectors clip boxes to the image bounds, so a person who is mostly out
     of frame - e.g. already through a doorway near the bottom of the camera's
     view - gets a box cut off at the frame edge rather than at their actual
     feet. body_center's midpoint then reflects only the visible sliver, not
     the real torso, and can permanently disagree with the feet even for a
-    genuine crossing (see the body-agreement check in process()). A small
-    tolerance absorbs float rounding from the normalization round-trip.
+    genuine crossing (see the body-agreement check in process()).
+
+    A camera mounted steeply overhead with its line drawn near the bottom of
+    the frame has the same problem even when the box never touches the
+    literal last pixel row: at that angle, a person's head/torso can project
+    well above their feet in the image, so body_center sits far enough from
+    bottom_center that a real crossing never satisfies body-agreement -  not
+    because the torso is lagging behind the feet (which the confirm delay
+    already tolerates), but because that vertical offset is a fixed property
+    of the geometry, not motion. Tolerance is therefore relative to frame
+    height (3%), not a fixed pixel count, so it also covers "close enough to
+    the edge" boxes on lines drawn near the bottom, not just literally
+    clipped ones.
     """
-    return person.bbox.y2 >= frame_height - 0.5
+    tolerance = max(0.5, frame_height * 0.03)
+    return person.bbox.y2 >= frame_height - tolerance

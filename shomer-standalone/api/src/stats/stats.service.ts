@@ -328,11 +328,17 @@ export class StatsService {
 
   async getHourly(tenantId: string): Promise<HourlyPoint[]> {
     const today = await this.getLocalToday();
+    // Entradas (person.line_crossed), não count(person.detected): rastreio
+    // bruto existe só para alimentar o mapa de calor (ver getHeatmap) - todo
+    // gráfico de volume/movimento usa cruzamento de linha, a mesma fonte de
+    // "Agora"/visitantes, para não misturar "identificar pessoa em quadro"
+    // com contagem de entrada/saída.
     const rows = await this.clickhouse.queryRows<{ hour: string; count: string }>(
       `SELECT toHour(timestamp, {tz:String}) AS hour, count() AS count
        FROM events
        WHERE tenant_id = {tenantId:String}
-         AND type = 'person.detected'
+         AND type = 'person.line_crossed'
+         AND lower(JSONExtractString(payload, 'direction')) = 'enter'
          AND toDate(timestamp, {tz:String}) = {today:Date}
          ${this.cameraScopeSql()}
        GROUP BY hour
@@ -503,7 +509,8 @@ export class StatsService {
       `SELECT toString(toDate(timestamp, {tz:String})) AS date, toHour(timestamp, {tz:String}) AS hour, count() AS count
        FROM events
        WHERE tenant_id = {tenantId:String}
-         AND type = 'person.detected'
+         AND type = 'person.line_crossed'
+         AND lower(JSONExtractString(payload, 'direction')) = 'enter'
          AND toDate(timestamp, {tz:String}) >= {from:Date}
          AND toDate(timestamp, {tz:String}) <= {to:Date}
          ${this.cameraScopeSql()}
@@ -535,7 +542,8 @@ export class StatsService {
          SELECT toDate(timestamp, {tz:String}) AS date, toHour(timestamp, {tz:String}) AS hour, count() AS c
          FROM events
          WHERE tenant_id = {tenantId:String}
-           AND type = 'person.detected'
+           AND type = 'person.line_crossed'
+           AND lower(JSONExtractString(payload, 'direction')) = 'enter'
            AND toDate(timestamp, {tz:String}) >= {from:Date}
            AND toDate(timestamp, {tz:String}) <= {to:Date}
            ${this.cameraScopeSql()}

@@ -30,7 +30,7 @@ import {
 } from "../../lib/api";
 import Shell from "../../components/Shell";
 import { ACCENT_OPTIONS, Accent, useTheme } from "../../components/Shell";
-import { AlertIcon, ClockIcon, PulseIcon, UsersIcon } from "../../components/Icons";
+import { AlertIcon, ClockIcon, PulseIcon } from "../../components/Icons";
 
 const REFRESH_INTERVAL_MS = 15_000;
 const STALE_AFTER_MS = 90_000;
@@ -173,16 +173,6 @@ function SaudeSection() {
               <span className="kpi-context">
                 Modelo: {health.modelReady === null ? "—" : health.modelReady ? "pronto" : "carregando"}
               </span>
-            </article>
-            <article className="kpi-card">
-              <div className="kpi-top">
-                <span className="kpi-icon">
-                  <UsersIcon />
-                </span>
-              </div>
-              <span className="kpi-label">Pessoas agora</span>
-              <div className="kpi-value">{health.personsCurrent ?? "—"}</div>
-              <span className="kpi-context">no enquadramento da câmera</span>
             </article>
             <article className="kpi-card">
               <div className="kpi-top">
