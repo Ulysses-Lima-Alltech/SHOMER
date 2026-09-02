@@ -48,6 +48,7 @@ class TrackCrossingState:
     first_seen_at: datetime
     first_point: "NormalizedPoint"
     last_point: "NormalizedPoint"
+    max_displacement: float = 0.0
     last_crossing_at: datetime | None = None
     # Candidate side change awaiting confirmation (see crossing_confirm_seconds) -
     # a foot/limb that pokes past the line for a single frame and pulls back
@@ -108,6 +109,18 @@ class LineCrossingAnalyzer:
         self.cooldown_seconds = cooldown_seconds
         self.track_ttl_seconds = track_ttl_seconds
         self.crossing_confirm_seconds = crossing_confirm_seconds
+        # A real crossing requires the track to have actually walked from one
+        # side to the other, not just jittered across the dead zone in place.
+        # Ungates on displacement since the track's first-ever detection, not
+        # a dwell timer - a stationary/near-stationary detection (mannequin,
+        # product display, a borderline-confidence false positive that
+        # flickers in and out near the line) never accumulates real
+        # displacement no matter how many times its bbox straddles the
+        # tolerance band, so it never confirms; a genuinely walking person
+        # clears this within their first couple of frames. Scaled off
+        # tolerance (the dead zone the point must cross) with a small floor
+        # so a very tight tolerance doesn't make this a no-op.
+        self.min_crossing_displacement = max(2.0 * tolerance, 0.03)
         self.entries = 0
         self.exits = 0
         self.last_crossing_at: datetime | None = None
@@ -160,6 +173,11 @@ class LineCrossingAnalyzer:
             state.last_point = point
             state.last_body_point = body_point
             state.last_bottom_clipped = bottom_clipped
+            displacement = math.hypot(
+                point.x - state.first_point.x, point.y - state.first_point.y
+            )
+            if displacement > state.max_displacement:
+                state.max_displacement = displacement
 
             if current_side is Side.ON_LINE:
                 continue
@@ -208,6 +226,16 @@ class LineCrossingAnalyzer:
                         body_side.value,
                     )
                     continue
+
+            if state.max_displacement < self.min_crossing_displacement:
+                logger.debug(
+                    "Line crossing candidate held: track_id=%s displacement=%.4f below minimum %.4f "
+                    "(static object or flickering false positive near the line)",
+                    person.track_id,
+                    state.max_displacement,
+                    self.min_crossing_displacement,
+                )
+                continue
 
             event = self._crossing_event(person.track_id, state, current_side, now)
             state.last_stable_side = current_side
@@ -323,6 +351,9 @@ class LineCrossingAnalyzer:
         last frame the track was actually seen, so the same body-agreement
         requirement still rejects a track that vanished without its torso
         ever reaching the new side (e.g. occlusion right after a foot poke).
+        Same minimum-displacement gate as process() too, for the same reason
+        (a static/flickering false positive near the line must not confirm
+        just because its track happened to expire while pending).
         """
         if state.pending_side is None or state.pending_since is None:
             return None
@@ -334,6 +365,8 @@ class LineCrossingAnalyzer:
                 return None
             if self.side_for_point(state.last_body_point) is not state.pending_side:
                 return None
+        if state.max_displacement < self.min_crossing_displacement:
+            return None
         return self._crossing_event(track_id, state, state.pending_side, now)
 
     @staticmethod

@@ -576,6 +576,46 @@ class LineCrossingTests(unittest.TestCase):
         self.assertEqual(expired[0].direction, CrossingDirection.EXIT)
         self.assertEqual(subject.stats().exits, 1)
 
+    def test_flickering_false_positive_near_the_line_never_counts(self):
+        # Real-world failure mode: a mannequin/product display right next to
+        # the line gets misdetected as "person" on borderline confidence,
+        # each detection getting a fresh short-lived track_id (the object
+        # itself never moves, but the track keeps churning). Each such track
+        # only ever sees a couple of frames straddling the dead zone - a
+        # side flip with almost no real displacement - and must never
+        # confirm as a crossing no matter how many different track_ids this
+        # keeps happening under.
+        subject = analyzer(a=(0.0, 0.98), b=(1.0, 0.98), tolerance=0.005, confirm_seconds=0.0)
+
+        process_one_bbox(subject, 1, 90, 97.0, 0)  # SIDE_B, clipped-near-edge
+        events = process_one_bbox(subject, 1, 91, 98.6, 1)  # flips to SIDE_A, tiny real displacement
+
+        self.assertEqual(events, [])
+        self.assertEqual(subject.stats().entries, 0)
+        self.assertEqual(subject.stats().exits, 0)
+
+        # A brand-new track_id at the same spot (the object's detection
+        # dropped and got re-acquired with a new id) must not confirm either.
+        more_events = process_one_bbox(subject, 2, 90, 97.0, 1.1)
+        more_events += process_one_bbox(subject, 2, 91, 98.6, 1.2)
+
+        self.assertEqual(more_events, [])
+        self.assertEqual(subject.stats().entries, 0)
+        self.assertEqual(subject.stats().exits, 0)
+
+    def test_real_crossing_with_enough_displacement_still_counts_near_the_line(self):
+        # Sanity check that the displacement gate doesn't just block
+        # everything near that line - a person actually walking through
+        # still confirms.
+        subject = analyzer(a=(0.0, 0.98), b=(1.0, 0.98), tolerance=0.005, confirm_seconds=0.0)
+
+        process_one_bbox(subject, 1, 60, 70.0, 0)  # SIDE_B, well clear of the line
+        events = process_one_bbox(subject, 1, 91, 99.5, 1)  # walks up to and past it
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].direction, CrossingDirection.EXIT)
+        self.assertEqual(subject.stats().exits, 1)
+
     def test_brief_track_gap_does_not_duplicate_count(self):
         # A short tracking gap (occlusion) within the track TTL must not
         # reset crossing state and cause the same physical crossing to be
